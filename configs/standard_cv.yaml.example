@@ -7,6 +7,7 @@ mode: standard_cv
 data:
   root: /path/to/Datasets/Cityscapes
   split: val
+  limit: null # only process the first N images; null for the full split
 
 segmentation_model:
   checkpoint: nvidia/segformer-b0-finetuned-cityscapes-1024-1024
@@ -27,9 +28,13 @@ clustering:
 
 naming:
   bootstrap_resamples: 500
+  cosine_threshold: 0.9 # per-resample cosine similarity needed to count as "agreeing"
   stability_threshold: 0.95
   top_k_concepts: 5
 
 concept_bank: concept_banks/general_concepts.txt
+
+plots:
+  max_points_per_class: 3000 # stratified subsample cap before UMAP fitting; null/omit for no cap
 
 output_dir: results/standard_cv

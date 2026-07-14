@@ -47,7 +47,12 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     concept_texts = load_concept_bank(Path(config["concept_bank"]))
     concept_embeddings = embed_concept_bank(concept_texts, backbone)
 
-    regions = _extract_all_regions(dataset, segmentation_model, config["regions"])
+    regions = _extract_all_regions(
+        dataset,
+        segmentation_model,
+        config["regions"],
+        limit=config["data"].get("limit"),
+    )
     embeddings = embed_regions(regions, backbone)
 
     named_directions = _name_bias_directions(
@@ -58,6 +63,7 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
         clustering_cfg=config["clustering"],
         naming_cfg=config["naming"],
         output_dir=output_dir,
+        plot_max_points=config.get("plots", {}).get("max_points_per_class", 3000),
     )
 
     _write_embeddings(regions, embeddings, output_dir / "embeddings.npz")
@@ -82,10 +88,12 @@ def _extract_all_regions(
     dataset: CityscapesDataset,
     segmentation_model: SegmentationModel,
     regions_cfg: dict[str, Any],
+    limit: int | None = None,
 ) -> list[Region]:
     all_regions: list[Region] = []
+    num_samples = min(len(dataset), limit) if limit else len(dataset)
     for index in tqdm(
-        range(len(dataset)), desc="Running inference + extracting regions"
+        range(num_samples), desc="Running inference + extracting regions"
     ):
         sample = dataset[index]
         prediction = segmentation_model.predict(sample.image)
@@ -113,6 +121,7 @@ def _name_bias_directions(
     clustering_cfg: dict[str, Any],
     naming_cfg: dict[str, Any],
     output_dir: Path,
+    plot_max_points: int = 3000,
 ) -> list[NamedDirection]:
     by_class: dict[int, list[int]] = defaultdict(list)
     for i, region in enumerate(regions):
@@ -141,7 +150,12 @@ def _name_bias_directions(
         )
 
         _plot_class_embeddings(
-            class_id, error_embeddings, correct_embeddings, cluster_labels, output_dir
+            class_id,
+            error_embeddings,
+            correct_embeddings,
+            cluster_labels,
+            output_dir,
+            plot_max_points,
         )
 
         for cluster_id in range(k):
@@ -153,6 +167,7 @@ def _name_bias_directions(
                 cluster_embeds,
                 correct_embeddings,
                 n_resamples=naming_cfg["bootstrap_resamples"],
+                cosine_threshold=naming_cfg["cosine_threshold"],
             )
             concepts = retrieve_concepts(
                 direction,
@@ -172,20 +187,63 @@ def _name_bias_directions(
     return named_directions
 
 
+def _stratified_subsample(
+    groups: list[np.ndarray], max_total: int, rng: np.random.Generator
+) -> list[np.ndarray]:
+    """Subsamples each group proportionally to its size, so a plot's point
+    budget doesn't let a large group (e.g. a common cluster, or the correct
+    pool) drown out smaller ones. Every non-empty group keeps at least 1
+    point so it stays visible."""
+    sizes = np.array([len(g) for g in groups])
+    total = int(sizes.sum())
+    if total <= max_total:
+        return groups
+
+    target = np.minimum(
+        np.maximum(1, np.round(max_total * sizes / total).astype(int)), sizes
+    )
+    return [
+        group
+        if len(group) <= n
+        else group[rng.choice(len(group), size=n, replace=False)]
+        for group, n in zip(groups, target)
+    ]
+
+
 def _plot_class_embeddings(
     class_id: int,
     error_embeddings: np.ndarray,
     correct_embeddings: np.ndarray,
     cluster_labels: np.ndarray,
     output_dir: Path,
+    max_points: int | None = 3000,
 ) -> None:
-    combined = np.concatenate([error_embeddings, correct_embeddings], axis=0)
+    num_clusters = int(cluster_labels.max()) + 1 if len(cluster_labels) else 0
+    groups = [error_embeddings[cluster_labels == c] for c in range(num_clusters)] + [
+        correct_embeddings
+    ]
+    if max_points:
+        groups = _stratified_subsample(groups, max_points, np.random.default_rng(0))
+    error_groups, correct_sample = groups[:-1], groups[-1]
+
+    error_sample = (
+        np.concatenate(error_groups, axis=0)
+        if error_groups
+        else np.zeros((0, correct_embeddings.shape[1]))
+    )
+    cluster_sample_labels = (
+        np.concatenate([np.full(len(g), c) for c, g in enumerate(error_groups)])
+        if error_groups
+        else np.zeros((0,), dtype=int)
+    )
+
+    combined = np.concatenate([error_sample, correct_sample], axis=0)
     if len(combined) < 4:
         return
 
     reducer = umap.UMAP(n_neighbors=min(15, len(combined) - 1), random_state=0)
     projected = reducer.fit_transform(combined)
-    n_error = len(error_embeddings)
+    n_error = len(error_sample)
 
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(exist_ok=True)
@@ -193,7 +251,7 @@ def _plot_class_embeddings(
     ax.scatter(
         projected[:n_error, 0],
         projected[:n_error, 1],
-        c=cluster_labels,
+        c=cluster_sample_labels,
         cmap="tab10",
         label="error",
         marker="x",
