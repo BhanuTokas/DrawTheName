@@ -1,0 +1,32 @@
+# Phase 1 -- Standard CV Mode (Cityscapes), implement and validate first.
+#
+# Copy this file to standard_cv.yaml (gitignored) and set data.root to this
+# machine's local dataset path.
+mode: standard_cv
+
+data:
+  root: /path/to/Datasets/Cityscapes
+  split: val
+
+backbone:
+  name: ViT-L-14
+  device: cuda
+
+regions:
+  min_area_px: 64
+  pad_px_min: 16
+  pad_frac: 0.1
+  error_rate_threshold: 0.5
+
+clustering:
+  k_min: 2
+  k_max: 8
+
+naming:
+  bootstrap_resamples: 500
+  stability_threshold: 0.95
+  top_k_concepts: 5
+
+concept_bank: concept_banks/general_concepts.txt
+
+output_dir: results/standard_cv

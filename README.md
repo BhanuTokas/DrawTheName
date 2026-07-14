@@ -43,6 +43,15 @@ originating project description).
 uv sync --extra dev
 ```
 
+`configs/*.yaml` are gitignored (machine-specific `data.root` paths, since
+dataset locations differ across machines). Copy the committed `.example`
+templates and fill in your local path:
+
+```
+cp configs/standard_cv.yaml.example configs/standard_cv.yaml
+cp configs/ftw.yaml.example configs/ftw.yaml
+```
+
 ## Status
 
 Scaffolding only -- pipeline functions are stubbed with `NotImplementedError`.

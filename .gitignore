@@ -221,3 +221,5 @@ __marimo__/
 misc/
 results/
 data/
+configs/standard_cv.yaml
+configs/ftw.yaml
