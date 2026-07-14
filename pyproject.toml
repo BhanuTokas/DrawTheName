@@ -27,6 +27,7 @@ dependencies = [
   "torchgeo>=0.9,<1",
   "torchvision>=0.17,<0.26",
   "tqdm>=4.65,<5",
+  "transformers>=4.45,<5",
   "umap-learn>=0.5,<1",
 ]
 optional-dependencies.dev = [
@@ -34,6 +35,15 @@ optional-dependencies.dev = [
   "ruff>=0.1,<1",
 ]
 urls.Repository = "https://github.com/btokas/DrawTheName"
+
+[tool.uv.sources]
+torch = [ { index = "pytorch-cu128" } ]
+torchvision = [ { index = "pytorch-cu128" } ]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
 [tool.ruff]
 fix = true

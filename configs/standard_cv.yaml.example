@@ -8,6 +8,9 @@ data:
   root: /path/to/Datasets/Cityscapes
   split: val
 
+segmentation_model:
+  checkpoint: nvidia/segformer-b0-finetuned-cityscapes-1024-1024
+
 backbone:
   name: ViT-L-14
   device: cuda
