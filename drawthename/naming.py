@@ -18,7 +18,9 @@ class NamedDirection:
     intra_inter_flag: str | None = None  # FTW mode only
 
 
-def bias_direction(error_embeddings: np.ndarray, correct_embeddings: np.ndarray) -> np.ndarray:
+def bias_direction(
+    error_embeddings: np.ndarray, correct_embeddings: np.ndarray
+) -> np.ndarray:
     """mean(error_embeddings) - mean(correct_embeddings)."""
     raise NotImplementedError
 

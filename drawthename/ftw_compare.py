@@ -22,6 +22,8 @@ def inter_tile_direction(regions: list[Region]) -> np.ndarray:
     raise NotImplementedError
 
 
-def flag_confound(intra_direction: np.ndarray, inter_direction: np.ndarray, threshold: float = 0.5) -> bool:
+def flag_confound(
+    intra_direction: np.ndarray, inter_direction: np.ndarray, threshold: float = 0.5
+) -> bool:
     """True if cosine similarity between intra- and inter-tile directions is below threshold."""
     raise NotImplementedError

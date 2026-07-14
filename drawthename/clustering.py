@@ -9,7 +9,9 @@ from __future__ import annotations
 import numpy as np
 
 
-def select_k_by_silhouette(embeddings: np.ndarray, k_min: int = 2, k_max: int = 8) -> int:
+def select_k_by_silhouette(
+    embeddings: np.ndarray, k_min: int = 2, k_max: int = 8
+) -> int:
     """Sweeps k in [k_min, k_max] and returns the k with the best silhouette score."""
     raise NotImplementedError
 

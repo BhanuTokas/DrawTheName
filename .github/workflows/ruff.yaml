@@ -1,0 +1,26 @@
+name: Lint Code
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Run Ruff lint (fails on issues, no autofix)
+        run: uv run ruff check .
+
+      - name: Run Ruff formatter
+        run: uv run ruff format .
+
+      - name: Commit formatted changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-format with Ruff"
