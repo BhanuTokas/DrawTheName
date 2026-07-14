@@ -1,0 +1,7 @@
+# Phase 3 -- FTW concept bank (~200 descriptors), primary concept bank.
+# Covers field boundary ambiguity, seasonal variation, cloud cover/shadow,
+# mixed crop types, field size variation, river/road interference,
+# waterlogging, harvest state, tillage patterns (spec section 4). Not yet curated.
+ambiguous field boundary
+cloud cover
+cloud shadow

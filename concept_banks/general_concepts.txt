@@ -1,0 +1,6 @@
+# Phase 3 -- General CV concept bank (~150 descriptors) for Standard CV Mode.
+# Covers texture, color, lighting, occlusion, scale, object boundary ambiguity.
+# Broden concept list is a suggested starting point (spec section 4). Not yet curated.
+blurry texture
+low contrast lighting
+strong shadow occlusion
