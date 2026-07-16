@@ -1,113 +1,55 @@
-# General CV concept bank (Phase 3).
-# Broden concepts (objects/parts/materials/colors/textures/scenes) from
-# Datasets/broden_concepts, cleaned up, plus a hand-written supplement
-# covering lighting/occlusion/scale/boundary-ambiguity that Broden doesn't
-# have categories for. See spec section 4.
+# General CV concept bank (Phase 3), curated for street/urban scenes.
+# Broden concepts (Datasets/broden_concepts) filtered to ones plausible in
+# a Cityscapes frame -- indoor-only objects dropped since the point is to
+# explain *why* a class's predictions failed, not restate what the class
+# is, and irrelevant concepts are pure noise in CLIP's embedding space.
+# Plus a supplement filling Cityscapes classes/parts Broden doesn't cover
+# at all, and the lighting/occlusion/scale/boundary qualifiers from spec
+# section 4 that Broden has no categories for.
 
-# --- Broden (170 concepts) ---
-air conditioner
+# --- Broden, street-relevant subset (82 concepts) ---
 airplane
-apron
 arm
-armchair
-ashcan
 awning
-back
-back pillow
-bag
 balcony
-bannister
 base
-basket
-bathroom
-bathtub
-beak
-bed
-bedclothes
-bedroom
 bench
 bicycle
 bird
 black
-blind
 blotchy
 blue
 blurriness
-board
 body
-book
-bookcase
-bottle
-bowl
-box
 brick
 bridge
-bucket
 building
 bumper
 bus
 bush
-cabinet
-can
-candlestick
-canopy
 cap
 car
-cardboard
-carpet
 cat
-ceiling
-ceramic
 chain wheel
-chair
-chandelier
-chest of drawers
 chimney
-clock
-coach
-coffee table
 column
-computer
 concrete
-counter
-countertop
-cow
-cup
-curtain
-cushion
-desk
-dining room
 dog
 door
 door frame
-doorframe
-double door
-drawer
-drinking glass
 ear
 earth
 engine
-exhaust hood
 eye
-eyebrow
 fabric
-fan
-faucet
 fence
 field
-figurine
-fireplace
 flag
-floor
 flower
 flowerpot
 fluorescent
-food
 foot
-footboard
-frame
 glass
-granite
 grass
 green
 ground
@@ -116,65 +58,66 @@ hand
 handle
 handle bar
 head
-headboard
 headlight
 hill
-horse
 house
-inside arm
-jar
-keyboard
-knob
-laminate
 lamp
-leather
 leg
-lid
 light
-loudspeaker
 manhole
 metal
-microwave
 minibike
 mirror
 motorbike
 mountain
-mouse
 mouth
-muzzle
-napkin
 neck
 nose
-ottoman
-outside arm
-oven
-pack
 painted
-painting
 palm
 pane
-paper
 path
-paw
-pedestal
 person
 pillar
-pillow
 pipe
 plant
-plate
 polka dots
 red
-refrigerator
 sand
 snow
-sofa
 stairs
 street
 stripes
-toilet
 tree
 water
+
+# --- Cityscapes gap-fill / vehicle parts (26 concepts) ---
+cloud
+construction barrier
+crosswalk
+curb
+exhaust pipe
+guardrail
+license plate
+pole
+pothole
+rearview mirror
+road
+road marking
+sidewalk
+sky
+streetlight
+taillight
+tire
+traffic light
+traffic sign
+train
+tram
+truck
+turn signal
+wall
+wheel
+windshield
 
 # --- Hand-written qualifiers (31 concepts) ---
 low contrast lighting
