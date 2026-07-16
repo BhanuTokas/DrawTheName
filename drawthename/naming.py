@@ -18,6 +18,20 @@ class NamedDirection:
     intra_inter_flag: str | None = None  # FTW mode only
 
 
+@dataclass
+class GlobalErrorMode:
+    """The class-agnostic direction shared across (nearly) every class's bias
+    vector -- e.g. "errors tend to be small/blurry/oddly-cropped" -- named the
+    same way as any other direction. Reported on its own, and also projected
+    out of each class's bias_vector before that direction's retrieve_concepts
+    call, so a class's concepts reflect what's specific to it rather than
+    being drowned out by this shared confound."""
+
+    bias_vector: np.ndarray
+    concepts: list[str]
+    stability: float
+
+
 def bias_direction(
     error_embeddings: np.ndarray, correct_embeddings: np.ndarray
 ) -> np.ndarray:
@@ -64,6 +78,14 @@ def bootstrap_sign_stability(
     norms = np.linalg.norm(directions, axis=1) + 1e-12
     cos_sims = (directions @ full_norm) / norms
     return float(np.mean(cos_sims > cosine_threshold))
+
+
+def deconfound(bias_vector: np.ndarray, global_direction: np.ndarray) -> np.ndarray:
+    """Projects global_direction out of bias_vector (standard vector
+    rejection), isolating whatever's specific to this direction from the
+    shared, class-agnostic component."""
+    global_unit = global_direction / (np.linalg.norm(global_direction) + 1e-12)
+    return bias_vector - np.dot(bias_vector, global_unit) * global_unit
 
 
 def retrieve_concepts(

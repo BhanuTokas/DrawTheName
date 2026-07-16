@@ -20,9 +20,11 @@ from drawthename.concept_bank import embed_concept_bank, load_concept_bank
 from drawthename.data.cityscapes import TRAIN_ID_NAMES, CityscapesDataset
 from drawthename.embeddings import embed_regions, load_backbone
 from drawthename.naming import (
+    GlobalErrorMode,
     NamedDirection,
     bias_direction,
     bootstrap_sign_stability,
+    deconfound,
     retrieve_concepts,
 )
 from drawthename.regions import Region, compute_error_mask, extract_regions
@@ -55,11 +57,16 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     )
     embeddings = embed_regions(regions, backbone)
 
+    global_error_mode = _compute_global_error_mode(
+        regions, embeddings, concept_texts, concept_embeddings, config["naming"]
+    )
+
     named_directions = _name_bias_directions(
         regions,
         embeddings,
         concept_texts,
         concept_embeddings,
+        global_error_mode,
         clustering_cfg=config["clustering"],
         naming_cfg=config["naming"],
         output_dir=output_dir,
@@ -68,9 +75,12 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
 
     _write_embeddings(regions, embeddings, output_dir / "embeddings.npz")
     _write_clusters(named_directions, output_dir / "clusters.json")
-    _write_bias_directions(named_directions, output_dir / "bias_directions.json")
+    _write_bias_directions(
+        named_directions, global_error_mode, output_dir / "bias_directions.json"
+    )
     _write_summary(
         named_directions,
+        global_error_mode,
         config["naming"]["stability_threshold"],
         output_dir / "summary.md",
     )
@@ -113,11 +123,41 @@ def _extract_all_regions(
     return all_regions
 
 
+def _compute_global_error_mode(
+    regions: list[Region],
+    embeddings: np.ndarray,
+    concept_texts: list[str],
+    concept_embeddings: np.ndarray,
+    naming_cfg: dict[str, Any],
+) -> GlobalErrorMode:
+    """The direction shared across nearly every class's bias vector (e.g.
+    "errors tend to be small/blurry/oddly-cropped regardless of class") --
+    pooling every class's error/correct regions together, rather than
+    averaging the per-cluster vectors, so it isn't skewed by classes that
+    happened to get more clusters."""
+    error_idx = [i for i, r in enumerate(regions) if r.label == "error"]
+    correct_idx = [i for i, r in enumerate(regions) if r.label == "correct"]
+    direction = bias_direction(embeddings[error_idx], embeddings[correct_idx])
+    stability = bootstrap_sign_stability(
+        embeddings[error_idx],
+        embeddings[correct_idx],
+        n_resamples=naming_cfg["bootstrap_resamples"],
+        cosine_threshold=naming_cfg["cosine_threshold"],
+    )
+    concepts = retrieve_concepts(
+        direction, concept_texts, concept_embeddings, top_k=naming_cfg["top_k_concepts"]
+    )
+    return GlobalErrorMode(
+        bias_vector=direction, concepts=concepts, stability=stability
+    )
+
+
 def _name_bias_directions(
     regions: list[Region],
     embeddings: np.ndarray,
     concept_texts: list[str],
     concept_embeddings: np.ndarray,
+    global_error_mode: GlobalErrorMode,
     clustering_cfg: dict[str, Any],
     naming_cfg: dict[str, Any],
     output_dir: Path,
@@ -169,8 +209,9 @@ def _name_bias_directions(
                 n_resamples=naming_cfg["bootstrap_resamples"],
                 cosine_threshold=naming_cfg["cosine_threshold"],
             )
+            deconfounded = deconfound(direction, global_error_mode.bias_vector)
             concepts = retrieve_concepts(
-                direction,
+                deconfounded,
                 concept_texts,
                 concept_embeddings,
                 top_k=naming_cfg["top_k_concepts"],
@@ -295,25 +336,46 @@ def _write_clusters(named_directions: list[NamedDirection], path: Path) -> None:
     )
 
 
-def _write_bias_directions(named_directions: list[NamedDirection], path: Path) -> None:
-    payload = [
-        {
-            "class_id": d.class_id,
-            "cluster_id": d.cluster_id,
-            "bias_vector": d.bias_vector.tolist(),
-            "concepts": d.concepts,
-            "stability": d.stability,
-            "intra_inter_flag": d.intra_inter_flag,
-        }
-        for d in named_directions
-    ]
+def _write_bias_directions(
+    named_directions: list[NamedDirection],
+    global_error_mode: GlobalErrorMode,
+    path: Path,
+) -> None:
+    payload = {
+        "global_error_mode": {
+            "bias_vector": global_error_mode.bias_vector.tolist(),
+            "concepts": global_error_mode.concepts,
+            "stability": global_error_mode.stability,
+            "note": "shared, class-agnostic direction; projected out of each direction below before its concepts were retrieved",
+        },
+        "directions": [
+            {
+                "class_id": d.class_id,
+                "cluster_id": d.cluster_id,
+                "bias_vector": d.bias_vector.tolist(),
+                "concepts": d.concepts,
+                "stability": d.stability,
+                "intra_inter_flag": d.intra_inter_flag,
+            }
+            for d in named_directions
+        ],
+    }
     path.write_text(json.dumps(payload, indent=2))
 
 
 def _write_summary(
-    named_directions: list[NamedDirection], stability_threshold: float, path: Path
+    named_directions: list[NamedDirection],
+    global_error_mode: GlobalErrorMode,
+    stability_threshold: float,
+    path: Path,
 ) -> None:
     lines = ["# Bias Naming Summary\n"]
+    lines.append("## Global Error Mode (shared across classes)")
+    lines.append(f"- stability: {global_error_mode.stability:.3f}")
+    lines.append(f"- concepts: {', '.join(global_error_mode.concepts)}")
+    lines.append(
+        "- this direction is projected out of every class/cluster direction below before its concepts are retrieved\n"
+    )
     for d in sorted(named_directions, key=lambda d: (d.class_id, d.cluster_id)):
         class_name = TRAIN_ID_NAMES.get(d.class_id, str(d.class_id))
         flag = (

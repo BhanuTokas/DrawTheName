@@ -25,6 +25,12 @@ class Region:
     label: RegionLabel
     class_id: int
     pixel_error_rate: float
+    bbox: tuple[int, int, int, int] = (
+        0,
+        0,
+        0,
+        0,
+    )  # (y0, x0, y1, x1), padded, in source-image coords
     tile_id: str | None = None
 
 
@@ -81,6 +87,7 @@ def extract_regions(
                     label=region_label,
                     class_id=int(class_id),
                     pixel_error_rate=pixel_error_rate,
+                    bbox=(y0p, x0p, y1p, x1p),
                     tile_id=tile_id,
                 )
             )
