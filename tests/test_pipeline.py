@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pytest
 
@@ -5,6 +7,8 @@ from drawthename.naming import GlobalErrorMode, NamedDirection
 from drawthename.pipeline import (
     _compute_global_error_mode,
     _stratified_subsample,
+    _write_clusters,
+    _write_embeddings,
     _write_summary,
 )
 from drawthename.regions import Region
@@ -104,3 +108,45 @@ def test_write_summary_flags_low_residual_ratio(tmp_path):
     stable_line = next(line for line in text.splitlines() if "class_id=1" in line)
     assert "low residual signal" in low_signal_line
     assert "low residual signal" not in stable_line
+
+
+def test_write_embeddings_includes_cluster_id(tmp_path):
+    regions = [_make_region("error"), _make_region("correct"), _make_region("error")]
+    embeddings = np.zeros((3, 4))
+    # region index 0 -> cluster 1, index 2 has no assignment (e.g. a class
+    # with no named direction), index 1 (correct) is never clustered either.
+    cluster_id_by_region_idx = {0: 1}
+    out_path = tmp_path / "embeddings.npz"
+
+    _write_embeddings(regions, embeddings, cluster_id_by_region_idx, out_path)
+
+    data = np.load(out_path)
+    np.testing.assert_array_equal(data["cluster_id"], [1, -1, -1])
+
+
+def test_write_clusters_includes_silhouette_scores(tmp_path):
+    directions = [
+        NamedDirection(
+            class_id=0,
+            cluster_id=0,
+            bias_vector=np.zeros(4),
+            concepts=["a"],
+            stability=1.0,
+        ),
+        NamedDirection(
+            class_id=0,
+            cluster_id=1,
+            bias_vector=np.zeros(4),
+            concepts=["b"],
+            stability=1.0,
+        ),
+    ]
+    silhouette_by_class = {0: 0.42}
+    out_path = tmp_path / "clusters.json"
+
+    _write_clusters(directions, silhouette_by_class, out_path)
+
+    payload = json.loads(out_path.read_text())
+    assert payload["k_selected"] == {"0": 2}
+    assert payload["silhouette_scores"] == {"0": 0.42}
+    assert payload["clusters"] == {"0": [0, 1]}

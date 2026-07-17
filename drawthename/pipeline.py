@@ -13,6 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import umap
+from sklearn.metrics import silhouette_score
 from tqdm import tqdm
 
 from drawthename.clustering import cluster_embeddings, select_k_by_silhouette
@@ -71,20 +72,24 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
         regions, embeddings, concept_texts, concept_embeddings, config["naming"]
     )
 
-    named_directions = _name_bias_directions(
-        regions,
-        embeddings,
-        concept_texts,
-        concept_embeddings,
-        global_error_mode,
-        clustering_cfg=config["clustering"],
-        naming_cfg=config["naming"],
-        output_dir=output_dir,
-        plot_max_points=config.get("plots", {}).get("max_points_per_class", 3000),
+    named_directions, cluster_id_by_region_idx, silhouette_by_class = (
+        _name_bias_directions(
+            regions,
+            embeddings,
+            concept_texts,
+            concept_embeddings,
+            global_error_mode,
+            clustering_cfg=config["clustering"],
+            naming_cfg=config["naming"],
+            output_dir=output_dir,
+            plot_max_points=config.get("plots", {}).get("max_points_per_class", 3000),
+        )
     )
 
-    _write_embeddings(regions, embeddings, output_dir / "embeddings.npz")
-    _write_clusters(named_directions, output_dir / "clusters.json")
+    _write_embeddings(
+        regions, embeddings, cluster_id_by_region_idx, output_dir / "embeddings.npz"
+    )
+    _write_clusters(named_directions, silhouette_by_class, output_dir / "clusters.json")
     _write_bias_directions(
         named_directions, global_error_mode, output_dir / "bias_directions.json"
     )
@@ -201,12 +206,19 @@ def _name_bias_directions(
     naming_cfg: dict[str, Any],
     output_dir: Path,
     plot_max_points: int = 3000,
-) -> list[NamedDirection]:
+) -> tuple[list[NamedDirection], dict[int, int], dict[int, float | None]]:
+    """Returns (named_directions, cluster_id_by_region_idx, silhouette_by_class).
+    cluster_id_by_region_idx maps a region's index in `regions`/`embeddings` to
+    its cluster_id (only error regions in classes that got clustered are
+    present); silhouette_by_class is the silhouette score for the k chosen
+    per class (None when k=1, since silhouette isn't defined for one cluster)."""
     by_class: dict[int, list[int]] = defaultdict(list)
     for i, region in enumerate(regions):
         by_class[region.class_id].append(i)
 
     named_directions: list[NamedDirection] = []
+    cluster_id_by_region_idx: dict[int, int] = {}
+    silhouette_by_class: dict[int, float | None] = {}
     for class_id, indices in by_class.items():
         class_regions = [regions[i] for i in indices]
         class_embeddings = embeddings[indices]
@@ -227,6 +239,11 @@ def _name_bias_directions(
             if k > 1
             else np.zeros(len(error_embeddings), dtype=int)
         )
+        silhouette_by_class[class_id] = (
+            float(silhouette_score(error_embeddings, cluster_labels)) if k > 1 else None
+        )
+        for local_idx, cluster_id in zip(error_idx, cluster_labels, strict=True):
+            cluster_id_by_region_idx[indices[local_idx]] = int(cluster_id)
 
         _plot_class_embeddings(
             class_id,
@@ -268,7 +285,7 @@ def _name_bias_directions(
                     residual_ratio=residual_ratio,
                 )
             )
-    return named_directions
+    return named_directions, cluster_id_by_region_idx, silhouette_by_class
 
 
 def _stratified_subsample(
@@ -356,8 +373,17 @@ def _plot_class_embeddings(
 
 
 def _write_embeddings(
-    regions: list[Region], embeddings: np.ndarray, path: Path
+    regions: list[Region],
+    embeddings: np.ndarray,
+    cluster_id_by_region_idx: dict[int, int],
+    path: Path,
 ) -> None:
+    # -1 for regions with no cluster assignment: "correct" regions (never
+    # clustered) and error regions in classes that didn't get named
+    # directions (too few error/correct examples for clustering_cfg.k_min).
+    cluster_id = np.array(
+        [cluster_id_by_region_idx.get(i, -1) for i in range(len(regions))]
+    )
     np.savez(
         path,
         embeddings=embeddings,
@@ -366,6 +392,7 @@ def _write_embeddings(
         label=np.array([r.label for r in regions]),
         class_id=np.array([r.class_id for r in regions]),
         pixel_error_rate=np.array([r.pixel_error_rate for r in regions]),
+        cluster_id=cluster_id,
     )
 
 
@@ -381,13 +408,25 @@ def _write_pixel_accuracy(pixel_counts: dict[int, tuple[int, int]], path: Path) 
     path.write_text(json.dumps(payload, indent=2))
 
 
-def _write_clusters(named_directions: list[NamedDirection], path: Path) -> None:
-    by_class: dict[int, list[dict[str, Any]]] = defaultdict(list)
+def _write_clusters(
+    named_directions: list[NamedDirection],
+    silhouette_by_class: dict[int, float | None],
+    path: Path,
+) -> None:
+    by_class: dict[int, list[int]] = defaultdict(list)
     for d in named_directions:
-        by_class[d.class_id].append({"cluster_id": d.cluster_id})
+        by_class[d.class_id].append(d.cluster_id)
     k_by_class = {class_id: len(clusters) for class_id, clusters in by_class.items()}
     path.write_text(
-        json.dumps({"k_selected": k_by_class, "clusters": by_class}, indent=2)
+        json.dumps(
+            {
+                "k_selected": k_by_class,
+                "silhouette_scores": silhouette_by_class,
+                "clusters": by_class,
+                "note": "per-region cluster assignments live in embeddings.npz's cluster_id array (-1 = unclustered: a correct region, or an error region in a class with no named direction)",
+            },
+            indent=2,
+        )
     )
 
 
