@@ -146,6 +146,7 @@ def _extract_all_regions(
                 pad_px_min=regions_cfg["pad_px_min"],
                 pad_frac=regions_cfg["pad_frac"],
                 error_rate_threshold=regions_cfg["error_rate_threshold"],
+                subdivision_size=regions_cfg.get("subdivision_size"),
             )
         )
     return all_regions, {

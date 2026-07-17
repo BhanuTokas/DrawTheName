@@ -21,6 +21,7 @@ regions:
   pad_px_min: 16
   pad_frac: 0.1
   error_rate_threshold: 0.5
+  subdivision_size: 192 # components larger than this^2 get split into a grid of this-sized sub-regions (192 + padding ~= CLIP's native 224x224 input, avoiding upscaling); null/omit to disable
 
 clustering:
   k_min: 2
@@ -30,7 +31,7 @@ naming:
   bootstrap_resamples: 500
   cosine_threshold: 0.9 # per-resample cosine similarity needed to count as "agreeing"
   stability_threshold: 0.95
-  top_k_concepts: 5
+  top_k_concepts: 10
 
 concept_bank: concept_banks/general_concepts.txt
 
