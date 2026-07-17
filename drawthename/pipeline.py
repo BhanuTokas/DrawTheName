@@ -16,7 +16,11 @@ import umap
 from tqdm import tqdm
 
 from drawthename.clustering import cluster_embeddings, select_k_by_silhouette
-from drawthename.concept_bank import embed_concept_bank, load_concept_bank
+from drawthename.concept_bank import (
+    center_embeddings,
+    embed_concept_bank,
+    load_concept_bank,
+)
 from drawthename.data.cityscapes import TRAIN_ID_NAMES, CityscapesDataset
 from drawthename.embeddings import embed_regions, load_backbone
 from drawthename.naming import (
@@ -27,14 +31,20 @@ from drawthename.naming import (
     deconfound,
     retrieve_concepts,
 )
-from drawthename.regions import Region, compute_error_mask, extract_regions
+from drawthename.regions import (
+    IGNORE_CLASS,
+    Region,
+    compute_error_mask,
+    extract_regions,
+)
 from drawthename.segmentation_model import SegmentationModel
 
 
 def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     """Phase 1: Cityscapes inference -> region extraction -> embeddings ->
     clustering -> bias naming. Writes embeddings.npz, clusters.json,
-    bias_directions.json, summary.md, plots/ to output_dir."""
+    bias_directions.json, pixel_accuracy.json, summary.md, plots/ to
+    output_dir."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = CityscapesDataset(Path(config["data"]["root"]), config["data"]["split"])
@@ -47,9 +57,9 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     )
 
     concept_texts = load_concept_bank(Path(config["concept_bank"]))
-    concept_embeddings = embed_concept_bank(concept_texts, backbone)
+    concept_embeddings = center_embeddings(embed_concept_bank(concept_texts, backbone))
 
-    regions = _extract_all_regions(
+    regions, pixel_counts = _extract_all_regions(
         dataset,
         segmentation_model,
         config["regions"],
@@ -78,6 +88,7 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     _write_bias_directions(
         named_directions, global_error_mode, output_dir / "bias_directions.json"
     )
+    _write_pixel_accuracy(pixel_counts, output_dir / "pixel_accuracy.json")
     _write_summary(
         named_directions,
         global_error_mode,
@@ -99,8 +110,16 @@ def _extract_all_regions(
     segmentation_model: SegmentationModel,
     regions_cfg: dict[str, Any],
     limit: int | None = None,
-) -> list[Region]:
+) -> tuple[list[Region], dict[int, tuple[int, int]]]:
+    """Returns the extracted regions, plus per-class (error_pixels,
+    total_pixels) pixel-level counts -- a class's region-level "error rate"
+    (fraction of its regions labeled error) and its pixel-level error rate
+    can differ hugely, since region-counting weighs a 64px^2 boundary sliver
+    the same as a 40,000px^2 well-segmented blob."""
     all_regions: list[Region] = []
+    pixel_counts: dict[int, list[int]] = defaultdict(
+        lambda: [0, 0]
+    )  # class_id -> [error_px, total_px]
     num_samples = min(len(dataset), limit) if limit else len(dataset)
     for index in tqdm(
         range(num_samples), desc="Running inference + extracting regions"
@@ -108,6 +127,15 @@ def _extract_all_regions(
         sample = dataset[index]
         prediction = segmentation_model.predict(sample.image)
         error_mask = compute_error_mask(prediction, sample.ground_truth)
+
+        for class_id in np.unique(sample.ground_truth):
+            if class_id == IGNORE_CLASS:
+                continue
+            class_pixel_mask = sample.ground_truth == class_id
+            counts = pixel_counts[int(class_id)]
+            counts[0] += int(error_mask[class_pixel_mask].sum())
+            counts[1] += int(class_pixel_mask.sum())
+
         all_regions.extend(
             extract_regions(
                 image=sample.image,
@@ -120,7 +148,9 @@ def _extract_all_regions(
                 error_rate_threshold=regions_cfg["error_rate_threshold"],
             )
         )
-    return all_regions
+    return all_regions, {
+        class_id: tuple(counts) for class_id, counts in pixel_counts.items()
+    }
 
 
 def _compute_global_error_mode(
@@ -324,6 +354,18 @@ def _write_embeddings(
         class_id=np.array([r.class_id for r in regions]),
         pixel_error_rate=np.array([r.pixel_error_rate for r in regions]),
     )
+
+
+def _write_pixel_accuracy(pixel_counts: dict[int, tuple[int, int]], path: Path) -> None:
+    payload = {
+        str(class_id): {
+            "error_pixels": error_px,
+            "total_pixels": total_px,
+            "pixel_error_rate": error_px / total_px if total_px else None,
+        }
+        for class_id, (error_px, total_px) in sorted(pixel_counts.items())
+    }
+    path.write_text(json.dumps(payload, indent=2))
 
 
 def _write_clusters(named_directions: list[NamedDirection], path: Path) -> None:
