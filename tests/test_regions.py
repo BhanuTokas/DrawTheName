@@ -48,3 +48,39 @@ def test_extract_regions_ignores_ignore_class():
         image, error_mask, ground_truth, image_id="scene0", min_area_px=10
     )
     assert regions == []
+
+
+def test_extract_regions_subdivides_large_components():
+    # 40x40, single class, all correct -- one component, area 1600.
+    ground_truth = np.zeros((40, 40), dtype=np.uint8)
+    error_mask = np.zeros((40, 40), dtype=np.uint8)
+    image = np.zeros((40, 40, 3), dtype=np.uint8)
+
+    whole = extract_regions(
+        image, error_mask, ground_truth, image_id="scene0", min_area_px=10
+    )
+    assert len(whole) == 1
+
+    tiled = extract_regions(
+        image,
+        error_mask,
+        ground_truth,
+        image_id="scene0",
+        min_area_px=10,
+        subdivision_size=10,
+    )
+    assert len(tiled) == 16  # 40x40 split into 10x10 tiles
+    assert all(r.label == "correct" for r in tiled)
+
+
+def test_extract_regions_subdivision_leaves_small_components_whole():
+    image, error_mask, ground_truth = _make_scene()
+    regions = extract_regions(
+        image,
+        error_mask,
+        ground_truth,
+        image_id="scene0",
+        min_area_px=10,
+        subdivision_size=192,
+    )
+    assert len(regions) == 2  # each half (10x20=200px) is well under 192^2, stays whole

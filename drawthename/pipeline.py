@@ -16,23 +16,35 @@ import umap
 from tqdm import tqdm
 
 from drawthename.clustering import cluster_embeddings, select_k_by_silhouette
-from drawthename.concept_bank import embed_concept_bank, load_concept_bank
+from drawthename.concept_bank import (
+    center_embeddings,
+    embed_concept_bank,
+    load_concept_bank,
+)
 from drawthename.data.cityscapes import TRAIN_ID_NAMES, CityscapesDataset
 from drawthename.embeddings import embed_regions, load_backbone
 from drawthename.naming import (
+    GlobalErrorMode,
     NamedDirection,
     bias_direction,
     bootstrap_sign_stability,
+    deconfound,
     retrieve_concepts,
 )
-from drawthename.regions import Region, compute_error_mask, extract_regions
+from drawthename.regions import (
+    IGNORE_CLASS,
+    Region,
+    compute_error_mask,
+    extract_regions,
+)
 from drawthename.segmentation_model import SegmentationModel
 
 
 def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     """Phase 1: Cityscapes inference -> region extraction -> embeddings ->
     clustering -> bias naming. Writes embeddings.npz, clusters.json,
-    bias_directions.json, summary.md, plots/ to output_dir."""
+    bias_directions.json, pixel_accuracy.json, summary.md, plots/ to
+    output_dir."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = CityscapesDataset(Path(config["data"]["root"]), config["data"]["split"])
@@ -45,9 +57,9 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     )
 
     concept_texts = load_concept_bank(Path(config["concept_bank"]))
-    concept_embeddings = embed_concept_bank(concept_texts, backbone)
+    concept_embeddings = center_embeddings(embed_concept_bank(concept_texts, backbone))
 
-    regions = _extract_all_regions(
+    regions, pixel_counts = _extract_all_regions(
         dataset,
         segmentation_model,
         config["regions"],
@@ -55,11 +67,16 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     )
     embeddings = embed_regions(regions, backbone)
 
+    global_error_mode = _compute_global_error_mode(
+        regions, embeddings, concept_texts, concept_embeddings, config["naming"]
+    )
+
     named_directions = _name_bias_directions(
         regions,
         embeddings,
         concept_texts,
         concept_embeddings,
+        global_error_mode,
         clustering_cfg=config["clustering"],
         naming_cfg=config["naming"],
         output_dir=output_dir,
@@ -68,11 +85,16 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
 
     _write_embeddings(regions, embeddings, output_dir / "embeddings.npz")
     _write_clusters(named_directions, output_dir / "clusters.json")
-    _write_bias_directions(named_directions, output_dir / "bias_directions.json")
+    _write_bias_directions(
+        named_directions, global_error_mode, output_dir / "bias_directions.json"
+    )
+    _write_pixel_accuracy(pixel_counts, output_dir / "pixel_accuracy.json")
     _write_summary(
         named_directions,
+        global_error_mode,
         config["naming"]["stability_threshold"],
         output_dir / "summary.md",
+        residual_ratio_threshold=config["naming"].get("residual_ratio_threshold", 0.1),
     )
 
 
@@ -89,8 +111,16 @@ def _extract_all_regions(
     segmentation_model: SegmentationModel,
     regions_cfg: dict[str, Any],
     limit: int | None = None,
-) -> list[Region]:
+) -> tuple[list[Region], dict[int, tuple[int, int]]]:
+    """Returns the extracted regions, plus per-class (error_pixels,
+    total_pixels) pixel-level counts -- a class's region-level "error rate"
+    (fraction of its regions labeled error) and its pixel-level error rate
+    can differ hugely, since region-counting weighs a 64px^2 boundary sliver
+    the same as a 40,000px^2 well-segmented blob."""
     all_regions: list[Region] = []
+    pixel_counts: dict[int, list[int]] = defaultdict(
+        lambda: [0, 0]
+    )  # class_id -> [error_px, total_px]
     num_samples = min(len(dataset), limit) if limit else len(dataset)
     for index in tqdm(
         range(num_samples), desc="Running inference + extracting regions"
@@ -98,6 +128,15 @@ def _extract_all_regions(
         sample = dataset[index]
         prediction = segmentation_model.predict(sample.image)
         error_mask = compute_error_mask(prediction, sample.ground_truth)
+
+        for class_id in np.unique(sample.ground_truth):
+            if class_id == IGNORE_CLASS:
+                continue
+            class_pixel_mask = sample.ground_truth == class_id
+            counts = pixel_counts[int(class_id)]
+            counts[0] += int(error_mask[class_pixel_mask].sum())
+            counts[1] += int(class_pixel_mask.sum())
+
         all_regions.extend(
             extract_regions(
                 image=sample.image,
@@ -108,9 +147,48 @@ def _extract_all_regions(
                 pad_px_min=regions_cfg["pad_px_min"],
                 pad_frac=regions_cfg["pad_frac"],
                 error_rate_threshold=regions_cfg["error_rate_threshold"],
+                subdivision_size=regions_cfg.get("subdivision_size"),
             )
         )
-    return all_regions
+    return all_regions, {
+        class_id: tuple(counts) for class_id, counts in pixel_counts.items()
+    }
+
+
+def _compute_global_error_mode(
+    regions: list[Region],
+    embeddings: np.ndarray,
+    concept_texts: list[str],
+    concept_embeddings: np.ndarray,
+    naming_cfg: dict[str, Any],
+) -> GlobalErrorMode:
+    """The direction shared across nearly every class's bias vector (e.g.
+    "errors tend to be small/blurry/oddly-cropped regardless of class") --
+    pooling every class's error/correct regions together, rather than
+    averaging the per-cluster vectors, so it isn't skewed by classes that
+    happened to get more clusters."""
+    error_idx = [i for i, r in enumerate(regions) if r.label == "error"]
+    correct_idx = [i for i, r in enumerate(regions) if r.label == "correct"]
+    if not error_idx or not correct_idx:
+        raise ValueError(
+            f"Can't compute a global error mode: {len(error_idx)} error region(s) and "
+            f"{len(correct_idx)} correct region(s) across the whole run. Need at least "
+            "one of each, or bias_direction silently returns NaN. Check error_rate_threshold "
+            "and the dataset/limit being used (this is most likely on a tiny sanity-check run)."
+        )
+    direction = bias_direction(embeddings[error_idx], embeddings[correct_idx])
+    stability = bootstrap_sign_stability(
+        embeddings[error_idx],
+        embeddings[correct_idx],
+        n_resamples=naming_cfg["bootstrap_resamples"],
+        cosine_threshold=naming_cfg["cosine_threshold"],
+    )
+    concepts = retrieve_concepts(
+        direction, concept_texts, concept_embeddings, top_k=naming_cfg["top_k_concepts"]
+    )
+    return GlobalErrorMode(
+        bias_vector=direction, concepts=concepts, stability=stability
+    )
 
 
 def _name_bias_directions(
@@ -118,6 +196,7 @@ def _name_bias_directions(
     embeddings: np.ndarray,
     concept_texts: list[str],
     concept_embeddings: np.ndarray,
+    global_error_mode: GlobalErrorMode,
     clustering_cfg: dict[str, Any],
     naming_cfg: dict[str, Any],
     output_dir: Path,
@@ -169,8 +248,12 @@ def _name_bias_directions(
                 n_resamples=naming_cfg["bootstrap_resamples"],
                 cosine_threshold=naming_cfg["cosine_threshold"],
             )
+            deconfounded = deconfound(direction, global_error_mode.bias_vector)
+            residual_ratio = float(
+                np.linalg.norm(deconfounded) / (np.linalg.norm(direction) + 1e-12)
+            )
             concepts = retrieve_concepts(
-                direction,
+                deconfounded,
                 concept_texts,
                 concept_embeddings,
                 top_k=naming_cfg["top_k_concepts"],
@@ -182,6 +265,7 @@ def _name_bias_directions(
                     bias_vector=direction,
                     concepts=concepts,
                     stability=stability,
+                    residual_ratio=residual_ratio,
                 )
             )
     return named_directions
@@ -285,6 +369,18 @@ def _write_embeddings(
     )
 
 
+def _write_pixel_accuracy(pixel_counts: dict[int, tuple[int, int]], path: Path) -> None:
+    payload = {
+        str(class_id): {
+            "error_pixels": error_px,
+            "total_pixels": total_px,
+            "pixel_error_rate": error_px / total_px if total_px else None,
+        }
+        for class_id, (error_px, total_px) in sorted(pixel_counts.items())
+    }
+    path.write_text(json.dumps(payload, indent=2))
+
+
 def _write_clusters(named_directions: list[NamedDirection], path: Path) -> None:
     by_class: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for d in named_directions:
@@ -295,33 +391,62 @@ def _write_clusters(named_directions: list[NamedDirection], path: Path) -> None:
     )
 
 
-def _write_bias_directions(named_directions: list[NamedDirection], path: Path) -> None:
-    payload = [
-        {
-            "class_id": d.class_id,
-            "cluster_id": d.cluster_id,
-            "bias_vector": d.bias_vector.tolist(),
-            "concepts": d.concepts,
-            "stability": d.stability,
-            "intra_inter_flag": d.intra_inter_flag,
-        }
-        for d in named_directions
-    ]
+def _write_bias_directions(
+    named_directions: list[NamedDirection],
+    global_error_mode: GlobalErrorMode,
+    path: Path,
+) -> None:
+    payload = {
+        "global_error_mode": {
+            "bias_vector": global_error_mode.bias_vector.tolist(),
+            "concepts": global_error_mode.concepts,
+            "stability": global_error_mode.stability,
+            "note": "shared, class-agnostic direction; projected out of each direction below before its concepts were retrieved",
+        },
+        "directions": [
+            {
+                "class_id": d.class_id,
+                "cluster_id": d.cluster_id,
+                "bias_vector": d.bias_vector.tolist(),
+                "concepts": d.concepts,
+                "stability": d.stability,
+                "residual_ratio": d.residual_ratio,
+                "intra_inter_flag": d.intra_inter_flag,
+            }
+            for d in named_directions
+        ],
+    }
     path.write_text(json.dumps(payload, indent=2))
 
 
 def _write_summary(
-    named_directions: list[NamedDirection], stability_threshold: float, path: Path
+    named_directions: list[NamedDirection],
+    global_error_mode: GlobalErrorMode,
+    stability_threshold: float,
+    path: Path,
+    residual_ratio_threshold: float = 0.1,
 ) -> None:
     lines = ["# Bias Naming Summary\n"]
+    lines.append("## Global Error Mode (shared across classes)")
+    lines.append(f"- stability: {global_error_mode.stability:.3f}")
+    lines.append(f"- concepts: {', '.join(global_error_mode.concepts)}")
+    lines.append(
+        "- this direction is projected out of every class/cluster direction below before its concepts are retrieved\n"
+    )
     for d in sorted(named_directions, key=lambda d: (d.class_id, d.cluster_id)):
         class_name = TRAIN_ID_NAMES.get(d.class_id, str(d.class_id))
-        flag = (
-            "" if d.stability >= stability_threshold else " (below stability threshold)"
-        )
+        flags = []
+        if d.stability < stability_threshold:
+            flags.append("below stability threshold")
+        if d.residual_ratio < residual_ratio_threshold:
+            flags.append(
+                "low residual signal -- mostly shared confound, concepts may be near-arbitrary"
+            )
+        flag = f" ({'; '.join(flags)})" if flags else ""
         lines.append(
             f"## {class_name} (class_id={d.class_id}), cluster {d.cluster_id}{flag}"
         )
         lines.append(f"- stability: {d.stability:.3f}")
+        lines.append(f"- residual_ratio: {d.residual_ratio:.3f}")
         lines.append(f"- concepts: {', '.join(d.concepts)}\n")
     path.write_text("\n".join(lines))

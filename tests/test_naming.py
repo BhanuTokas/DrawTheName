@@ -1,8 +1,10 @@
 import numpy as np
+import pytest
 
 from drawthename.naming import (
     bias_direction,
     bootstrap_sign_stability,
+    deconfound,
     retrieve_concepts,
 )
 
@@ -32,6 +34,21 @@ def test_bootstrap_sign_stability_low_for_overlapping_noise():
         error_embeddings, correct_embeddings, n_resamples=200
     )
     assert stability < 0.95
+
+
+def test_deconfound_removes_component_along_global_direction():
+    global_direction = np.array([1.0, 0.0, 0.0])
+    bias_vector = np.array([3.0, 4.0, 0.0])
+    residual = deconfound(bias_vector, global_direction)
+    assert np.dot(residual, global_direction) == pytest.approx(0.0, abs=1e-9)
+    np.testing.assert_array_almost_equal(residual, [0.0, 4.0, 0.0])
+
+
+def test_deconfound_leaves_orthogonal_vector_unchanged():
+    global_direction = np.array([1.0, 0.0])
+    bias_vector = np.array([0.0, 5.0])
+    residual = deconfound(bias_vector, global_direction)
+    np.testing.assert_array_almost_equal(residual, bias_vector)
 
 
 def test_retrieve_concepts_picks_closest_by_cosine_similarity():
