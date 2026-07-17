@@ -94,6 +94,7 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
         global_error_mode,
         config["naming"]["stability_threshold"],
         output_dir / "summary.md",
+        residual_ratio_threshold=config["naming"].get("residual_ratio_threshold", 0.1),
     )
 
 
@@ -248,6 +249,9 @@ def _name_bias_directions(
                 cosine_threshold=naming_cfg["cosine_threshold"],
             )
             deconfounded = deconfound(direction, global_error_mode.bias_vector)
+            residual_ratio = float(
+                np.linalg.norm(deconfounded) / (np.linalg.norm(direction) + 1e-12)
+            )
             concepts = retrieve_concepts(
                 deconfounded,
                 concept_texts,
@@ -261,6 +265,7 @@ def _name_bias_directions(
                     bias_vector=direction,
                     concepts=concepts,
                     stability=stability,
+                    residual_ratio=residual_ratio,
                 )
             )
     return named_directions
@@ -405,6 +410,7 @@ def _write_bias_directions(
                 "bias_vector": d.bias_vector.tolist(),
                 "concepts": d.concepts,
                 "stability": d.stability,
+                "residual_ratio": d.residual_ratio,
                 "intra_inter_flag": d.intra_inter_flag,
             }
             for d in named_directions
@@ -418,6 +424,7 @@ def _write_summary(
     global_error_mode: GlobalErrorMode,
     stability_threshold: float,
     path: Path,
+    residual_ratio_threshold: float = 0.1,
 ) -> None:
     lines = ["# Bias Naming Summary\n"]
     lines.append("## Global Error Mode (shared across classes)")
@@ -428,12 +435,18 @@ def _write_summary(
     )
     for d in sorted(named_directions, key=lambda d: (d.class_id, d.cluster_id)):
         class_name = TRAIN_ID_NAMES.get(d.class_id, str(d.class_id))
-        flag = (
-            "" if d.stability >= stability_threshold else " (below stability threshold)"
-        )
+        flags = []
+        if d.stability < stability_threshold:
+            flags.append("below stability threshold")
+        if d.residual_ratio < residual_ratio_threshold:
+            flags.append(
+                "low residual signal -- mostly shared confound, concepts may be near-arbitrary"
+            )
+        flag = f" ({'; '.join(flags)})" if flags else ""
         lines.append(
             f"## {class_name} (class_id={d.class_id}), cluster {d.cluster_id}{flag}"
         )
         lines.append(f"- stability: {d.stability:.3f}")
+        lines.append(f"- residual_ratio: {d.residual_ratio:.3f}")
         lines.append(f"- concepts: {', '.join(d.concepts)}\n")
     path.write_text("\n".join(lines))

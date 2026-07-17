@@ -15,6 +15,7 @@ class NamedDirection:
     bias_vector: np.ndarray
     concepts: list[str]
     stability: float
+    residual_ratio: float = 1.0  # ||deconfounded|| / ||bias_vector||; near 0 means concepts are ~arbitrary noise, not signal
     intra_inter_flag: str | None = None  # FTW mode only
 
 

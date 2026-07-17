@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
-from drawthename.pipeline import _compute_global_error_mode, _stratified_subsample
+from drawthename.naming import GlobalErrorMode, NamedDirection
+from drawthename.pipeline import (
+    _compute_global_error_mode,
+    _stratified_subsample,
+    _write_summary,
+)
 from drawthename.regions import Region
 
 _NAMING_CFG = {"bootstrap_resamples": 10, "cosine_threshold": 0.9, "top_k_concepts": 1}
@@ -61,3 +66,41 @@ def test_stratified_subsample_never_exceeds_group_size():
     groups = [np.zeros((3, 4)), np.zeros((3, 4))]
     result = _stratified_subsample(groups, max_total=4, rng=rng)
     assert all(len(g) <= 3 for g in result)
+
+
+def test_write_summary_flags_low_residual_ratio(tmp_path):
+    global_error_mode = GlobalErrorMode(
+        bias_vector=np.zeros(4), concepts=["x"], stability=1.0
+    )
+    directions = [
+        NamedDirection(
+            class_id=0,
+            cluster_id=0,
+            bias_vector=np.zeros(4),
+            concepts=["a"],
+            stability=1.0,
+            residual_ratio=0.02,
+        ),
+        NamedDirection(
+            class_id=1,
+            cluster_id=0,
+            bias_vector=np.zeros(4),
+            concepts=["b"],
+            stability=1.0,
+            residual_ratio=0.8,
+        ),
+    ]
+    out_path = tmp_path / "summary.md"
+    _write_summary(
+        directions,
+        global_error_mode,
+        stability_threshold=0.95,
+        path=out_path,
+        residual_ratio_threshold=0.1,
+    )
+
+    text = out_path.read_text()
+    low_signal_line = next(line for line in text.splitlines() if "class_id=0" in line)
+    stable_line = next(line for line in text.splitlines() if "class_id=1" in line)
+    assert "low residual signal" in low_signal_line
+    assert "low residual signal" not in stable_line

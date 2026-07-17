@@ -31,6 +31,7 @@ naming:
   bootstrap_resamples: 500
   cosine_threshold: 0.9 # per-resample cosine similarity needed to count as "agreeing"
   stability_threshold: 0.95
+  residual_ratio_threshold: 0.1 # flag a direction in summary.md when ||deconfounded|| / ||raw|| falls below this -- concepts are ~arbitrary noise, not signal
   top_k_concepts: 10
 
 concept_bank: concept_banks/general_concepts.txt
