@@ -168,6 +168,13 @@ def _compute_global_error_mode(
     happened to get more clusters."""
     error_idx = [i for i, r in enumerate(regions) if r.label == "error"]
     correct_idx = [i for i, r in enumerate(regions) if r.label == "correct"]
+    if not error_idx or not correct_idx:
+        raise ValueError(
+            f"Can't compute a global error mode: {len(error_idx)} error region(s) and "
+            f"{len(correct_idx)} correct region(s) across the whole run. Need at least "
+            "one of each, or bias_direction silently returns NaN. Check error_rate_threshold "
+            "and the dataset/limit being used (this is most likely on a tiny sanity-check run)."
+        )
     direction = bias_direction(embeddings[error_idx], embeddings[correct_idx])
     stability = bootstrap_sign_stability(
         embeddings[error_idx],

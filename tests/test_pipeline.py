@@ -1,6 +1,39 @@
 import numpy as np
+import pytest
 
-from drawthename.pipeline import _stratified_subsample
+from drawthename.pipeline import _compute_global_error_mode, _stratified_subsample
+from drawthename.regions import Region
+
+_NAMING_CFG = {"bootstrap_resamples": 10, "cosine_threshold": 0.9, "top_k_concepts": 1}
+
+
+def _make_region(label: str) -> Region:
+    return Region(
+        image_id="x",
+        region_id=0,
+        crop=np.zeros((4, 4, 3), dtype=np.uint8),
+        label=label,
+        class_id=0,
+        pixel_error_rate=1.0 if label == "error" else 0.0,
+    )
+
+
+def test_compute_global_error_mode_raises_when_no_error_regions():
+    regions = [_make_region("correct"), _make_region("correct")]
+    embeddings = np.zeros((2, 8))
+    with pytest.raises(ValueError, match="0 error region"):
+        _compute_global_error_mode(
+            regions, embeddings, ["x"], np.zeros((1, 8)), _NAMING_CFG
+        )
+
+
+def test_compute_global_error_mode_raises_when_no_correct_regions():
+    regions = [_make_region("error"), _make_region("error")]
+    embeddings = np.zeros((2, 8))
+    with pytest.raises(ValueError, match="0 correct region"):
+        _compute_global_error_mode(
+            regions, embeddings, ["x"], np.zeros((1, 8)), _NAMING_CFG
+        )
 
 
 def test_stratified_subsample_noop_when_under_budget():
