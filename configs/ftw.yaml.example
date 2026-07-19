@@ -1,16 +1,21 @@
-# Phase 2 -- FTW Mode, implement after Standard CV Mode is validated.
+# Phase 2 -- FTW Mode.
 #
-# Copy this file to ftw.yaml (gitignored) and set data.root to this machine's
-# local dataset path.
+# Copy this file to ftw.yaml (gitignored) and set data.root and prue.checkpoint
+# to this machine's local paths.
 mode: ftw
 
 data:
-  root: /path/to/Datasets/FTW
+  root: /path/to/Datasets/FTW/ftw
+  countries: [austria]
   split: val
+  limit: null # only process the first N tiles; null for the full split
 
 prue:
   repo: https://github.com/fieldsoftheworld/ftw-prue
-  checkpoint: null # path to PRUE checkpoint
+  # this checkpoint is RGB-only (in_channels=3, temporal_options=window_a_rgb),
+  # not the 4-band RGB+NIR input the original spec assumed -- see
+  # drawthename/data/ftw.py and drawthename/segmentation_model.py::PRUEModel
+  checkpoint: /path/to/ftw-baselines/models/prue-unet-logcoshdice-augs-efficientnetb3-winargb.ckpt
 
 backbone:
   name: ViT-L-14 # primary; georsclip-ViT-B-32 as secondary
@@ -21,6 +26,7 @@ regions:
   pad_px_min: 16
   pad_frac: 0.1
   error_rate_threshold: 0.5
+  subdivision_size: null # FTW tiles are 256x256, well under CLIP's 224 native input plus padding -- no subdivision needed
 
 clustering:
   k_min: 2
@@ -28,12 +34,17 @@ clustering:
 
 naming:
   bootstrap_resamples: 500
+  cosine_threshold: 0.9 # per-resample cosine similarity needed to count as "agreeing"
   stability_threshold: 0.95
-  top_k_concepts: 5
+  residual_ratio_threshold: 0.1 # flag a direction in summary.md when ||deconfounded|| / ||raw|| falls below this -- concepts are ~arbitrary noise, not signal
+  top_k_concepts: 10
 
 ftw_compare:
-  intra_inter_divergence_threshold: 0.5 # cosine similarity
+  intra_inter_divergence_threshold: 0.5 # cosine similarity below this between intra-tile and inter-tile directions flags a likely tile-level confound
 
-concept_bank: concept_banks/ftw_concepts.txt
+concept_bank: concept_banks/ftw_concepts.txt # still a placeholder -- curation is Phase 3
+
+plots:
+  max_points_per_class: 3000 # stratified subsample cap before UMAP fitting; null/omit for no cap
 
 output_dir: results/ftw

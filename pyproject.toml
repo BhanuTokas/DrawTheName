@@ -12,6 +12,7 @@ license-files = [ "LICENSE" ]
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "ftfy>=6.1,<7",
+  "geopandas>=0.14,<2",
   "matplotlib>=3.7,<4",
   "numba>=0.61,<1",
   "numpy>=1.24,<3",
@@ -29,6 +30,7 @@ dependencies = [
   "tqdm>=4.65,<5",
   "transformers>=4.45,<5",
   "umap-learn>=0.5,<1",
+  "ftw-tools",
 ]
 optional-dependencies.dev = [
   "pytest>=7.4,<9",
@@ -37,6 +39,9 @@ optional-dependencies.dev = [
 urls.Repository = "https://github.com/btokas/DrawTheName"
 
 [tool.uv.sources]
+# local sibling checkout -- provides load_model_from_checkpoint (PRUE) and
+# FTW's own tile/dataset loading, both reused rather than reimplemented.
+ftw-tools = { path = "../ftw-baselines", editable = true }
 torch = [ { index = "pytorch-cu128" } ]
 torchvision = [ { index = "pytorch-cu128" } ]
 

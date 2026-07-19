@@ -53,18 +53,19 @@ Standard CV Mode (implemented) additionally:
 
 ## Layout
 
-- `drawthename/` -- pipeline package: `data/cityscapes.py` (dataloader),
-  `segmentation_model.py` (black-box wrapper), `regions.py` (error mask +
+- `drawthename/` -- pipeline package: `data/cityscapes.py` / `data/ftw.py`
+  (dataloaders), `segmentation_model.py` (black-box wrapper: SegFormer for
+  Standard CV Mode, PRUE for FTW Mode), `regions.py` (error mask +
   connected-component extraction), `embeddings.py` (CLIP backbone),
   `clustering.py`, `concept_bank.py`, `naming.py` (bias direction,
-  deconfounding, bootstrap stability, concept retrieval), `pipeline.py`
-  (orchestration), `ftw_compare.py` / `data/ftw.py` (Phase 2, stubbed).
+  deconfounding, bootstrap stability, concept retrieval), `ftw_compare.py`
+  (intra/inter-tile confound detection), `pipeline.py` (orchestration).
 - `configs/` -- per-mode hyperparameters and paths.
 - `concept_banks/general_concepts.txt` -- curated for Standard CV Mode:
   Broden concepts filtered to street/urban-plausible ones, a Cityscapes
   class/vehicle-part gap-fill supplement, and hand-written lighting/
   occlusion/scale/boundary-ambiguity qualifiers. `ftw_concepts.txt` is still
-  a placeholder (Phase 2).
+  a placeholder (Phase 3).
 - `scripts/` -- CLI entry points (`run_standard_cv.py`, `run_ftw.py`).
 - `tests/`
 - `results/` -- pipeline outputs (gitignored): `embeddings.npz`,
@@ -94,7 +95,13 @@ the full Cityscapes val split (500 images): inference, region extraction
 deconfounding, and concept retrieval all run via `scripts/run_standard_cv.py`
 in roughly 13-17 minutes. `concept_banks/general_concepts.txt` is curated.
 
-**Phase 2 (FTW Mode)** is still stubbed (`run_ftw_pipeline`,
-`drawthename/data/ftw.py`, `drawthename/ftw_compare.py` all raise
-`NotImplementedError`), and its concept bank
-(`concept_banks/ftw_concepts.txt`) is still a placeholder.
+**Phase 2 (FTW Mode) is implemented and smoke-tested** against the real
+Austria val split and the local PRUE checkpoint
+(`prue-unet-logcoshdice-augs-efficientnetb3-winargb`, RGB-only:
+`in_channels=3`, `temporal_options=window_a_rgb`, contradicting the original
+spec's 4-band RGB+NIR assumption): inference, tile-aware region extraction,
+CLIP embedding, clustering, deconfounding, intra/inter-tile confound
+checking, and concept retrieval all run via `scripts/run_ftw.py`. Its concept
+bank (`concept_banks/ftw_concepts.txt`) is still a placeholder -- curation is
+Phase 3, so current concept names aren't meaningful yet, only the pipeline
+mechanics are validated.

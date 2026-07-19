@@ -100,6 +100,7 @@ def test_write_summary_flags_low_residual_ratio(tmp_path):
         global_error_mode,
         stability_threshold=0.95,
         path=out_path,
+        class_names={},
         residual_ratio_threshold=0.1,
     )
 
