@@ -45,6 +45,8 @@ def to_rgb(image_rgbnir: np.ndarray) -> np.ndarray:
     return image_rgbnir[:3]
 
 
-def classify_tile(error_mask: np.ndarray, error_threshold: float = 0.5) -> TileClassification:
+def classify_tile(
+    error_mask: np.ndarray, error_threshold: float = 0.5
+) -> TileClassification:
     """Labels a tile as all-correct, all-error, or mixed from its per-pixel error mask."""
     raise NotImplementedError

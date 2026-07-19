@@ -21,7 +21,9 @@ IGNORE_INDEX = 255
 _ID_TO_TRAINID = np.full(256, IGNORE_INDEX, dtype=np.uint8)
 for _cls in _TVCityscapes.classes:
     if _cls.id >= 0:
-        _ID_TO_TRAINID[_cls.id] = _cls.train_id if not _cls.ignore_in_eval else IGNORE_INDEX
+        _ID_TO_TRAINID[_cls.id] = (
+            _cls.train_id if not _cls.ignore_in_eval else IGNORE_INDEX
+        )
 
 TRAIN_ID_NAMES = {
     cls.train_id: cls.name
