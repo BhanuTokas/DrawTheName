@@ -41,11 +41,17 @@ from drawthename.regions import (
 from drawthename.segmentation_model import SegmentationModel
 
 
-def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
+def run_standard_cv_pipeline(
+    config: dict[str, Any], output_dir: Path, image_indices: list[int] | None = None
+) -> None:
     """Phase 1: Cityscapes inference -> region extraction -> embeddings ->
     clustering -> bias naming. Writes embeddings.npz, clusters.json,
     bias_directions.json, pixel_accuracy.json, summary.md, plots/ to
-    output_dir."""
+    output_dir.
+
+    image_indices, if given, restricts the run to those dataset indices
+    (e.g. for splitting the val set into two halves to check reproducibility)
+    instead of the first config["data"]["limit"] images."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = CityscapesDataset(Path(config["data"]["root"]), config["data"]["split"])
@@ -65,6 +71,7 @@ def run_standard_cv_pipeline(config: dict[str, Any], output_dir: Path) -> None:
         segmentation_model,
         config["regions"],
         limit=config["data"].get("limit"),
+        indices=image_indices,
     )
     embeddings = embed_regions(regions, backbone)
 
@@ -116,20 +123,24 @@ def _extract_all_regions(
     segmentation_model: SegmentationModel,
     regions_cfg: dict[str, Any],
     limit: int | None = None,
+    indices: list[int] | None = None,
 ) -> tuple[list[Region], dict[int, tuple[int, int]]]:
     """Returns the extracted regions, plus per-class (error_pixels,
     total_pixels) pixel-level counts -- a class's region-level "error rate"
     (fraction of its regions labeled error) and its pixel-level error rate
     can differ hugely, since region-counting weighs a 64px^2 boundary sliver
-    the same as a 40,000px^2 well-segmented blob."""
+    the same as a 40,000px^2 well-segmented blob.
+
+    indices, if given, takes priority over limit and restricts the run to
+    exactly those dataset indices."""
     all_regions: list[Region] = []
     pixel_counts: dict[int, list[int]] = defaultdict(
         lambda: [0, 0]
     )  # class_id -> [error_px, total_px]
-    num_samples = min(len(dataset), limit) if limit else len(dataset)
-    for index in tqdm(
-        range(num_samples), desc="Running inference + extracting regions"
-    ):
+    if indices is None:
+        num_samples = min(len(dataset), limit) if limit else len(dataset)
+        indices = list(range(num_samples))
+    for index in tqdm(indices, desc="Running inference + extracting regions"):
         sample = dataset[index]
         prediction = segmentation_model.predict(sample.image)
         error_mask = compute_error_mask(prediction, sample.ground_truth)
