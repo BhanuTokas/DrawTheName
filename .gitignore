@@ -220,7 +220,7 @@ __marimo__/
 # Custom
 misc/
 results/
-data/
+/data/
 configs/standard_cv.yaml
 configs/ftw.yaml
 .vscode/
