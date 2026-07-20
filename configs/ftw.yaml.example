@@ -42,7 +42,7 @@ naming:
 ftw_compare:
   intra_inter_divergence_threshold: 0.5 # cosine similarity below this between intra-tile and inter-tile directions flags a likely tile-level confound
 
-concept_bank: concept_banks/ftw_concepts.txt # still a placeholder -- curation is Phase 3
+concept_bank: concept_banks/ftw_concepts.txt
 
 plots:
   max_points_per_class: 3000 # stratified subsample cap before UMAP fitting; null/omit for no cap
