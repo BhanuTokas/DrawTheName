@@ -39,9 +39,13 @@ optional-dependencies.dev = [
 urls.Repository = "https://github.com/btokas/DrawTheName"
 
 [tool.uv.sources]
-# local sibling checkout -- provides load_model_from_checkpoint (PRUE) and
-# FTW's own tile/dataset loading, both reused rather than reimplemented.
-ftw-tools = { path = "../ftw-baselines", editable = true }
+# Pinned to a specific upstream commit rather than a local sibling path --
+# fieldsoftheworld/ftw-baselines' `ftw_tools` import name (load_model_from_checkpoint,
+# FTW's own tile/dataset loading, both reused rather than reimplemented) hasn't
+# been published to PyPI yet (PyPI's ftw-tools 1.4.3 still ships the pre-rename
+# `ftw`/`ftw_cli` import names, and 2.0.0b5 is unreleased); a git dependency
+# resolves identically here and in CI, unlike a "../ftw-baselines" path.
+ftw-tools = { git = "https://github.com/fieldsoftheworld/ftw-baselines", rev = "0f1709fb1b5ef2ed7dc8ba6f90aa8d319019ee6e" }
 torch = [ { index = "pytorch-cu128" } ]
 torchvision = [ { index = "pytorch-cu128" } ]
 

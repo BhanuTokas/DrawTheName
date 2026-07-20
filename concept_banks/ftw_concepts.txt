@@ -1,7 +1,214 @@
-# Phase 3 -- FTW concept bank (~200 descriptors), primary concept bank.
-# Covers field boundary ambiguity, seasonal variation, cloud cover/shadow,
-# mixed crop types, field size variation, river/road interference,
-# waterlogging, harvest state, tillage patterns (spec section 4). Not yet curated.
+# FTW concept bank (Phase 3), curated for Sentinel-2 agricultural field
+# boundary segmentation (spec section 4: ~200 descriptors covering field
+# boundary ambiguity, seasonal variation, cloud cover/shadow, mixed crop
+# types, field size variation, river/road interference, waterlogging,
+# harvest state, tillage patterns). Plus a general remote-sensing/soil/
+# vegetation supplement filling in visual vocabulary those categories don't
+# individually cover but that PRUE's actual failure crops are likely to hit.
+
+# --- Field boundary ambiguity (20 concepts) ---
 ambiguous field boundary
+faint field boundary
+indistinct field edge
+blurred field boundary
+field boundary blending into surrounding land
+field boundary occluded by vegetation
+field boundary occluded by trees
+field boundary obscured by shadow
+overlapping field boundaries
+merged adjacent fields
+field boundary cut off at tile edge
+irregular field boundary shape
+curved field boundary
+straight field boundary
+narrow field boundary strip
+field boundary marked by hedgerow
+field boundary marked by tree line
+field boundary marked by fence line
+field boundary marked by drainage ditch
+unmarked field boundary
+
+# --- Seasonal variation (20 concepts) ---
+early spring vegetation
+late spring green growth
+summer crop canopy
+autumn crop senescence
+winter bare soil
+winter dormant vegetation
+freshly sprouted crop
+mature crop canopy
+crop growth stage variation
+seasonal color change
+snow-covered field
+frost on field surface
+green-up period
+brown dormant grassland
+leaf-off deciduous trees
+leaf-on deciduous trees
+seasonal soil moisture
+dry season field
+wet season field
+post-frost field discoloration
+
+# --- Cloud cover / cloud shadow (15 concepts) ---
 cloud cover
+thin cloud cover
+thick cloud cover
+scattered clouds
 cloud shadow
+cloud shadow across field
+haze over field
+atmospheric haze
+partial cloud obstruction
+cloud edge artifact
+cirrus cloud interference
+cumulus cloud shadow
+patchy cloud shadow pattern
+cloud-free clear sky
+overcast lighting
+
+# --- Mixed crop types (20 concepts) ---
+mixed crop field
+multiple crop types in one field
+crop rotation pattern
+intercropped field
+adjacent fields with different crops
+row crop field
+cereal crop field
+row crop versus cover crop contrast
+patchwork of different crops
+strip cropping pattern
+mixed pasture and cropland
+orchard interspersed with cropland
+vineyard rows
+mixed grassland and cropland
+crop type boundary within field
+subdivided field with crop variation
+field with cover crop
+fallow field
+monoculture field
+polyculture field
+
+# --- Field size variation (15 concepts) ---
+small field parcel
+large field parcel
+narrow elongated field
+irregularly shaped field
+small subdivided field
+consolidated large field
+field fragmented into small plots
+strip field
+compact rectangular field
+oddly shaped field parcel
+tiny field patch
+sprawling large field
+field size mismatch with neighbors
+smallholder field plot
+industrial-scale field
+
+# --- River/road interference (15 concepts) ---
+river running through field
+stream bisecting field
+road crossing field
+dirt road through farmland
+paved road adjacent to field
+river bank vegetation
+riparian buffer strip
+irrigation canal
+drainage channel
+farm track
+road shoulder adjacent to cropland
+bridge over waterway
+river meander near field
+road intersection near field
+railway line through farmland
+
+# --- Waterlogging (15 concepts) ---
+waterlogged field
+standing water in field
+flooded field section
+wet patch in field
+saturated soil
+ponding water on cropland
+drainage issue in field
+puddled field surface
+partially submerged field
+water-stressed crop
+irrigation pooling
+soil moisture variation
+muddy field surface
+seasonal flooding
+wetland encroachment on field
+
+# --- Harvest state (15 concepts) ---
+freshly harvested field
+pre-harvest mature crop
+post-harvest stubble
+crop residue on field
+baled hay in field
+uncut standing crop
+partially harvested field
+harvested crop rows
+plowed-under residue
+harvest machinery tracks
+grain stubble field
+straw residue field
+recently mowed field
+unharvested overgrown field
+harvest timing mismatch between adjacent fields
+
+# --- Tillage patterns (15 concepts) ---
+tilled soil pattern
+plowed field furrows
+no-till field surface
+conventional tillage rows
+contour tillage pattern
+disked soil surface
+freshly plowed field
+tillage furrow lines
+minimum tillage residue
+soil ridges from tillage
+cultivated soil texture
+bare tilled soil
+tillage direction change
+seedbed preparation pattern
+tillage marks visible from above
+
+# --- Soil and vegetation color/texture (15 concepts) ---
+brown soil
+dark soil
+sandy soil
+green vegetation
+yellow crop
+golden wheat
+dense vegetation
+sparse vegetation
+bare earth
+vegetation index anomaly
+forest edge
+hedgerow
+tree cluster
+scrubland
+grassland texture
+
+# --- General remote-sensing qualifiers (20 concepts) ---
+satellite image
+aerial view
+overhead view
+top-down view
+low resolution satellite imagery
+sensor noise artifact
+image striping artifact
+sun glint on water
+bright reflective surface
+dark shadow area
+high contrast lighting
+low contrast lighting
+oversaturated pixel values
+underexposed dark area
+pixelated low-resolution texture
+farmland landscape
+agricultural landscape
+rural landscape
+patchwork farmland pattern
+open water

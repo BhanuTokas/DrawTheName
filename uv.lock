@@ -852,7 +852,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ftfy", specifier = ">=6.1,<7" },
-    { name = "ftw-tools", editable = "../ftw-baselines" },
+    { name = "ftw-tools", git = "https://github.com/fieldsoftheworld/ftw-baselines?rev=0f1709fb1b5ef2ed7dc8ba6f90aa8d319019ee6e" },
     { name = "geopandas", specifier = ">=0.14,<2" },
     { name = "matplotlib", specifier = ">=3.7,<4" },
     { name = "numba", specifier = ">=0.61,<1" },
@@ -1093,7 +1093,7 @@ wheels = [
 [[package]]
 name = "ftw-tools"
 version = "2.0.0b5"
-source = { editable = "../ftw-baselines" }
+source = { git = "https://github.com/fieldsoftheworld/ftw-baselines?rev=0f1709fb1b5ef2ed7dc8ba6f90aa8d319019ee6e#0f1709fb1b5ef2ed7dc8ba6f90aa8d319019ee6e" }
 dependencies = [
     { name = "click" },
     { name = "dask", extra = ["distributed"] },
@@ -1123,47 +1123,6 @@ dependencies = [
     { name = "torchvision" },
     { name = "tqdm" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "build", marker = "extra == 'dev'" },
-    { name = "click", specifier = ">=8.2.1,<9" },
-    { name = "dask", extras = ["distributed"], specifier = ">=2025.5.1" },
-    { name = "fiboa-cli", specifier = ">=0.21,<0.22" },
-    { name = "fsspec", extras = ["http"], specifier = ">=2025.7,<2026" },
-    { name = "ftw-tools", extras = ["delineate-anything", "dev"], marker = "extra == 'all'" },
-    { name = "geopandas", specifier = ">=1,<2" },
-    { name = "hatchling", marker = "extra == 'dev'" },
-    { name = "kornia", specifier = ">=0.8.2,<0.9" },
-    { name = "lightning", specifier = ">=2,<2.6" },
-    { name = "matplotlib", specifier = ">=3.7,<4" },
-    { name = "notebook", specifier = ">=7,<8" },
-    { name = "numpy", specifier = ">=1.24,<3" },
-    { name = "odc-stac", specifier = ">=0.5,<1" },
-    { name = "planetary-computer", specifier = ">=1,<2" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4,<=5" },
-    { name = "pyarrow", specifier = ">=21,<24" },
-    { name = "pyproj", specifier = ">=3.6,<4" },
-    { name = "pystac", specifier = ">=1.8,<2" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4,<9" },
-    { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.8,<4" },
-    { name = "pyyaml", specifier = ">=6,<7" },
-    { name = "rasterio", specifier = ">=1.3,<2" },
-    { name = "rioxarray", specifier = ">=0.15,<1" },
-    { name = "rtree", specifier = ">=1,<2" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1,<1" },
-    { name = "scikit-image", specifier = ">=0.25.2,<2" },
-    { name = "scipy", specifier = ">=1.11,<2" },
-    { name = "tenacity", specifier = ">=9.1.2,<10" },
-    { name = "tensorboard", specifier = ">=2.15,<3" },
-    { name = "torch", specifier = ">=2.2,<3" },
-    { name = "torchgeo", specifier = ">=0.9,<1" },
-    { name = "torchvision", specifier = ">=0.17,<0.26" },
-    { name = "tqdm", specifier = ">=4.65,<5" },
-    { name = "twine", marker = "extra == 'dev'" },
-    { name = "ultralytics", marker = "extra == 'delineate-anything'", specifier = ">=8.3.187,<9" },
-]
-provides-extras = ["all", "delineate-anything", "dev"]
 
 [[package]]
 name = "geopandas"
