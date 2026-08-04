@@ -6,9 +6,20 @@ mode: ftw
 
 data:
   root: /path/to/Datasets/FTW/ftw
-  countries: [austria]
+  countries: [austria] # add more (e.g. [austria, france]) to enable the intra/inter-country confound check and concept-set comparison below
   split: val
   limit: null # only process the first N tiles; null for the full split
+  # class_remap: {old_class_id: new_class_id}, per country -- corrects mask
+  # label conventions that don't match the rest (0=background/1=field-interior/
+  # 2=field-boundary). Observed: Kenya's val-split masks are presence-only
+  # annotated (fields confirmed, background not), so unconfirmed area is
+  # labeled 3 rather than 0 -- remap it to 255 (IGNORE_CLASS, excluded from
+  # region extraction and pixel accuracy entirely) rather than forcing it
+  # into any real class. Kenya's 1/2 already match field-interior/boundary,
+  # no shift needed for those.
+  # class_remap:
+  #   kenya:
+  #     3: 255
 
 prue:
   repo: https://github.com/fieldsoftheworld/ftw-prue
@@ -40,7 +51,8 @@ naming:
   top_k_concepts: 10
 
 ftw_compare:
-  intra_inter_divergence_threshold: 0.5 # cosine similarity below this between intra-tile and inter-tile directions flags a likely tile-level confound
+  intra_inter_divergence_threshold: 0.5 # cosine similarity below this between intra-tile/inter-tile (or intra-country/inter-country) directions flags a likely confound
+  concept_comparison_top_k: 20 # top-k used only for the intra-tile/intra-country/inter-country concept-set comparison (prevalent/tile_sensitive/domain_shift_candidates) -- wider than top_k_concepts above since intra-tile and intra-country pools are smaller/noisier, and a narrow top-k would manufacture spurious "differences" from sampling noise rather than real scope-dependence
 
 concept_bank: concept_banks/ftw_concepts.txt
 

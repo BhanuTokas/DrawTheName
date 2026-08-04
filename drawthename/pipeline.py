@@ -27,8 +27,11 @@ from drawthename.data.ftw import CLASS_NAMES as FTW_CLASS_NAMES
 from drawthename.data.ftw import FTWDataset, to_display_rgb
 from drawthename.embeddings import embed_regions, load_backbone
 from drawthename.ftw_compare import (
+    compare_concept_sets,
     flag_confound,
+    inter_country_direction,
     inter_tile_direction,
+    intra_country_direction,
     intra_tile_direction,
 )
 from drawthename.naming import (
@@ -130,6 +133,7 @@ def run_ftw_pipeline(config: dict[str, Any], output_dir: Path) -> None:
         Path(config["data"]["root"]),
         config["data"]["countries"],
         config["data"]["split"],
+        class_remap=config["data"].get("class_remap"),
     )
     segmentation_model = PRUEModel(
         checkpoint=config["prue"]["checkpoint"], device=config["backbone"]["device"]
@@ -169,6 +173,9 @@ def run_ftw_pipeline(config: dict[str, Any], output_dir: Path) -> None:
             intra_inter_cos_threshold=config["ftw_compare"][
                 "intra_inter_divergence_threshold"
             ],
+            concept_comparison_top_k=config["ftw_compare"].get(
+                "concept_comparison_top_k", 20
+            ),
         )
     )
 
@@ -214,6 +221,8 @@ def _extract_all_ftw_regions(
         error_mask = compute_error_mask(prediction, tile.ground_truth)
 
         for class_id in np.unique(tile.ground_truth):
+            if class_id == IGNORE_CLASS:
+                continue
             class_pixel_mask = tile.ground_truth == class_id
             counts = pixel_counts[int(class_id)]
             counts[0] += int(error_mask[class_pixel_mask].sum())
@@ -231,6 +240,7 @@ def _extract_all_ftw_regions(
                 pad_frac=regions_cfg["pad_frac"],
                 error_rate_threshold=regions_cfg["error_rate_threshold"],
                 tile_id=tile.tile_id,
+                country=tile.country,
                 subdivision_size=regions_cfg.get("subdivision_size"),
             )
         )
@@ -341,6 +351,7 @@ def _name_bias_directions(
     plot_max_points: int = 3000,
     check_tile_confounds: bool = False,
     intra_inter_cos_threshold: float = 0.5,
+    concept_comparison_top_k: int = 20,
 ) -> tuple[list[NamedDirection], dict[int, int], dict[int, float | None]]:
     """Returns (named_directions, cluster_id_by_region_idx, silhouette_by_class).
     cluster_id_by_region_idx maps a region's index in `regions`/`embeddings` to
@@ -415,30 +426,78 @@ def _name_bias_directions(
             )
 
             intra_inter_flag = None
+            country_confound_flag = None
+            concept_comparison = None
             if check_tile_confounds:
                 cluster_regions = [
                     class_regions[i]
                     for local_idx, i in zip(cluster_mask, error_idx, strict=True)
                     if local_idx
                 ]
-                intra = intra_tile_direction(
+                intra_tile = intra_tile_direction(
                     cluster_regions, cluster_embeds, correct_regions, correct_embeddings
                 )
-                if intra is None:
+                if intra_tile is None:
                     intra_inter_flag = (
                         "insufficient same-tile error+correct overlap to check"
                     )
                 else:
-                    inter = inter_tile_direction(
+                    inter_tile = inter_tile_direction(
                         cluster_regions,
                         cluster_embeds,
                         correct_regions,
                         correct_embeddings,
                     )
                     confound = flag_confound(
-                        intra, inter, threshold=intra_inter_cos_threshold
+                        intra_tile, inter_tile, threshold=intra_inter_cos_threshold
                     )
                     intra_inter_flag = "confound flagged" if confound else "consistent"
+
+                intra_country = intra_country_direction(
+                    cluster_regions, cluster_embeds, correct_regions, correct_embeddings
+                )
+                inter_country = inter_country_direction(
+                    cluster_regions, cluster_embeds, correct_regions, correct_embeddings
+                )
+                if intra_country is None or inter_country is None:
+                    country_confound_flag = (
+                        "insufficient multi-country coverage to check"
+                    )
+                else:
+                    confound = flag_confound(
+                        intra_country,
+                        inter_country,
+                        threshold=intra_inter_cos_threshold,
+                    )
+                    country_confound_flag = (
+                        "confound flagged" if confound else "consistent"
+                    )
+
+                if (
+                    intra_tile is not None
+                    and intra_country is not None
+                    and inter_country is not None
+                ):
+                    concept_comparison = compare_concept_sets(
+                        retrieve_concepts(
+                            deconfound(intra_tile, global_error_mode.bias_vector),
+                            concept_texts,
+                            concept_embeddings,
+                            top_k=concept_comparison_top_k,
+                        ),
+                        retrieve_concepts(
+                            deconfound(intra_country, global_error_mode.bias_vector),
+                            concept_texts,
+                            concept_embeddings,
+                            top_k=concept_comparison_top_k,
+                        ),
+                        retrieve_concepts(
+                            deconfound(inter_country, global_error_mode.bias_vector),
+                            concept_texts,
+                            concept_embeddings,
+                            top_k=concept_comparison_top_k,
+                        ),
+                    )
 
             named_directions.append(
                 NamedDirection(
@@ -449,6 +508,8 @@ def _name_bias_directions(
                     stability=stability,
                     residual_ratio=residual_ratio,
                     intra_inter_flag=intra_inter_flag,
+                    country_confound_flag=country_confound_flag,
+                    concept_comparison=concept_comparison,
                 )
             )
     return named_directions, cluster_id_by_region_idx, silhouette_by_class
@@ -560,6 +621,7 @@ def _write_embeddings(
         class_id=np.array([r.class_id for r in regions]),
         pixel_error_rate=np.array([r.pixel_error_rate for r in regions]),
         cluster_id=cluster_id,
+        country=np.array([r.country for r in regions]),
     )
 
 
@@ -618,6 +680,8 @@ def _write_bias_directions(
                 "stability": d.stability,
                 "residual_ratio": d.residual_ratio,
                 "intra_inter_flag": d.intra_inter_flag,
+                "country_confound_flag": d.country_confound_flag,
+                "concept_comparison": d.concept_comparison,
             }
             for d in named_directions
         ],
@@ -634,6 +698,31 @@ def _write_summary(
     residual_ratio_threshold: float = 0.1,
 ) -> None:
     lines = ["# Bias Naming Summary\n"]
+    if any(d.concept_comparison is not None for d in named_directions):
+        lines.append("## How to read the concept-comparison buckets below\n")
+        lines.append(
+            "Each cluster's named concepts are cross-checked against three "
+            "versions of its bias direction, computed at increasingly loose "
+            "comparison scopes:\n"
+        )
+        lines.append(
+            "- **prevalent**: retrieved from all three scopes (intra-tile, "
+            "intra-country, inter-country) -- the strongest evidence of a "
+            "genuine, geography-independent model failure mode."
+        )
+        lines.append(
+            "- **tile-sensitive**: retrieved once tiles within the same "
+            "country are pooled (intra-country) and in inter-country, but "
+            "not from a single tile alone -- plausibly real, just needed a "
+            "less noisy pool to surface."
+        )
+        lines.append(
+            "- **domain-shift candidates**: retrieved *only* once "
+            "comparisons are allowed to cross a country boundary "
+            "(inter-country), absent from both intra-tile and intra-country "
+            "-- may reflect a genuine visual difference between countries' "
+            "landscapes rather than a model failure mode as such.\n"
+        )
     lines.append("## Global Error Mode (shared across classes)")
     lines.append(f"- stability: {global_error_mode.stability:.3f}")
     lines.append(f"- concepts: {', '.join(global_error_mode.concepts)}")
@@ -651,6 +740,8 @@ def _write_summary(
             )
         if d.intra_inter_flag == "confound flagged":
             flags.append("intra/inter-tile confound flagged")
+        if d.country_confound_flag == "confound flagged":
+            flags.append("intra/inter-country confound flagged")
         flag = f" ({'; '.join(flags)})" if flags else ""
         lines.append(
             f"## {class_name} (class_id={d.class_id}), cluster {d.cluster_id}{flag}"
@@ -659,5 +750,18 @@ def _write_summary(
         lines.append(f"- residual_ratio: {d.residual_ratio:.3f}")
         if d.intra_inter_flag is not None:
             lines.append(f"- intra/inter-tile check: {d.intra_inter_flag}")
+        if d.country_confound_flag is not None:
+            lines.append(f"- intra/inter-country check: {d.country_confound_flag}")
+        if d.concept_comparison is not None:
+            cc = d.concept_comparison
+            lines.append(
+                f"- prevalent (survives all scopes): {', '.join(cc['prevalent']) or 'none'}"
+            )
+            lines.append(
+                f"- tile-sensitive (needs cross-tile diversity): {', '.join(cc['tile_sensitive']) or 'none'}"
+            )
+            lines.append(
+                f"- domain-shift candidates (only appear cross-country): {', '.join(cc['domain_shift_candidates']) or 'none'}"
+            )
         lines.append(f"- concepts: {', '.join(d.concepts)}\n")
     path.write_text("\n".join(lines))

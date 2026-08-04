@@ -46,6 +46,7 @@ class FTWTile:
         np.ndarray
     )  # (H, W) uint8, 0=background, 1=field-interior, 2=field-boundary
     geography: str  # tile centroid, "lat,lon"
+    country: str  # e.g. "austria" -- the country subfolder this tile was loaded from
     acquisition_date: str | None = (
         None  # not present in this dataset's metadata (chips parquet has no date column)
     )
@@ -54,9 +55,23 @@ class FTWTile:
 class FTWDataset(Dataset):
     """Loads FTW Sentinel-2 tiles and field-boundary masks for a country/split."""
 
-    def __init__(self, root: Path, countries: list[str], split: str = "val") -> None:
+    def __init__(
+        self,
+        root: Path,
+        countries: list[str],
+        split: str = "val",
+        class_remap: dict[str, dict[int, int]] | None = None,
+    ) -> None:
+        """class_remap, if given, maps country -> {old_class_id: new_class_id},
+        applied to that country's ground_truth on load. Some countries' mask
+        exports don't use the same 0=background/1=field-interior/2=field-boundary
+        convention as the rest (e.g. Kenya's val split has been observed to use
+        1/2/3 instead of 0/1/2, with zero background pixels) -- this corrects
+        that per-country, rather than silently mixing incompatible label
+        schemes into one cross-country analysis."""
         self.root = Path(root)
         self.countries = [c.lower() for c in countries]
+        self.class_remap = {k.lower(): v for k, v in (class_remap or {}).items()}
         self._dataset = _FTWTools(
             root=str(root),
             countries=self.countries,
@@ -64,13 +79,16 @@ class FTWDataset(Dataset):
             temporal_options="window_a_rgb",
             load_boundaries=True,
         )
-        self._centroid_by_aoi_id = self._load_centroids()
+        self._centroid_by_country_aoi_id = self._load_centroids()
 
-    def _load_centroids(self) -> dict[str, tuple[float, float]]:
+    def _load_centroids(self) -> dict[tuple[str, str], tuple[float, float]]:
         # Tiles are small (a few hundred meters), so the midpoint of the
         # lon/lat bounding box is an adequate stand-in for a true centroid
         # and sidesteps geopandas' geographic-CRS centroid warning.
-        centroids: dict[str, tuple[float, float]] = {}
+        # Keyed by (country, aoi_id), not aoi_id alone -- aoi_id is only
+        # guaranteed unique within a single country's chips file, and with
+        # multiple countries loaded a collision would silently overwrite.
+        centroids: dict[tuple[str, str], tuple[float, float]] = {}
         for country in self.countries:
             chips_path = self.root / country / f"chips_{country}.parquet"
             chips_df = gpd.read_parquet(chips_path)
@@ -80,7 +98,7 @@ class FTWDataset(Dataset):
             for aoi_id, lat_val, lon_val in zip(
                 chips_df["aoi_id"], lat, lon, strict=True
             ):
-                centroids[aoi_id] = (lat_val, lon_val)
+                centroids[(country, aoi_id)] = (lat_val, lon_val)
         return centroids
 
     def __len__(self) -> int:
@@ -88,18 +106,38 @@ class FTWDataset(Dataset):
 
     def __getitem__(self, index: int) -> FTWTile:
         sample = self._dataset[index]
-        tile_id = Path(self._dataset.filenames[index]["window_a"]).stem
+        window_a_path = Path(self._dataset.filenames[index]["window_a"])
+        tile_id = window_a_path.stem
+        # ftw_tools lays out files as {root}/{country}/s2_images/window_a/{aoi_id}.tif
+        # -- the first path component after root is the country.
+        country = window_a_path.relative_to(self._dataset.root).parts[0]
 
         image = sample["image"].numpy().transpose(1, 2, 0)  # (3, H, W) -> (H, W, 3)
         ground_truth = sample["mask"].numpy().astype(np.uint8)
 
-        lat, lon = self._centroid_by_aoi_id.get(tile_id, (float("nan"), float("nan")))
+        remap = self.class_remap.get(country)
+        if remap:
+            ground_truth = remap_classes(ground_truth, remap)
+
+        lat, lon = self._centroid_by_country_aoi_id.get(
+            (country, tile_id), (float("nan"), float("nan"))
+        )
         return FTWTile(
             tile_id=tile_id,
             image=image,
             ground_truth=ground_truth,
             geography=f"{lat:.4f},{lon:.4f}",
+            country=country,
         )
+
+
+def remap_classes(ground_truth: np.ndarray, remap: dict[int, int]) -> np.ndarray:
+    """Applies a {old_class_id: new_class_id} remap to a ground_truth array.
+    Values not present in remap pass through unchanged."""
+    lookup = np.arange(256, dtype=np.uint8)
+    for old_id, new_id in remap.items():
+        lookup[old_id] = new_id
+    return lookup[ground_truth]
 
 
 def to_rgb(image: np.ndarray) -> np.ndarray:

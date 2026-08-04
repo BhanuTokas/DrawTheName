@@ -33,6 +33,21 @@ def test_extract_regions_labels_by_error_rate():
     assert by_class[1].pixel_error_rate == 0.0
 
 
+def test_extract_regions_threads_tile_id_and_country():
+    image, error_mask, ground_truth = _make_scene()
+    regions = extract_regions(
+        image,
+        error_mask,
+        ground_truth,
+        image_id="scene0",
+        min_area_px=10,
+        tile_id="tile_42",
+        country="austria",
+    )
+    assert all(r.tile_id == "tile_42" for r in regions)
+    assert all(r.country == "austria" for r in regions)
+
+
 def test_extract_regions_discards_small_components():
     image, error_mask, ground_truth = _make_scene()
     regions = extract_regions(
