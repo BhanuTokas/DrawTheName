@@ -103,7 +103,12 @@ Standard CV Mode (implemented) additionally:
   descriptors): field boundary ambiguity, seasonal variation, cloud
   cover/shadow, mixed crop types, field size, tillage/harvest state, plus a
   soil/vegetation and general remote-sensing supplement.
-- `scripts/` -- CLI entry points (`run_standard_cv.py`, `run_ftw.py`).
+- `scripts/` -- CLI entry points: `run_standard_cv.py` / `run_ftw.py` (the
+  pipeline itself), `validate_naming_synthetic.py` /
+  `validate_naming_synthetic_ftw.py` (synthetic-bias sanity checks -- inject
+  a known transform, e.g. cloud cover or motion blur, into real crops and
+  confirm the pipeline recovers the matching concept bank entry, without
+  needing a real segmentation model or ground truth).
 - `tests/`
 - `results/` -- pipeline outputs (gitignored): `embeddings.npz`,
   `clusters.json`, `bias_directions.json` (includes the global error mode),
@@ -122,6 +127,48 @@ templates and fill in your local path:
 ```
 cp configs/standard_cv.yaml.example configs/standard_cv.yaml
 cp configs/ftw.yaml.example configs/ftw.yaml
+```
+
+## Usage
+
+```
+uv run python scripts/run_standard_cv.py --config configs/standard_cv.yaml
+uv run python scripts/run_ftw.py --config configs/ftw.yaml
+```
+
+`--config` defaults to `configs/standard_cv.yaml` / `configs/ftw.yaml`
+respectively, so it can be omitted once those files exist. Each run writes
+`embeddings.npz`, `clusters.json`, `bias_directions.json`,
+`pixel_accuracy.json`, `summary.md`, and `plots/` to `output_dir` (set in
+the config).
+
+For FTW Mode, list 2+ countries in `data.countries` to additionally get the
+intra/inter-country confound check and per-country-pair domain-shift
+breakdown described above:
+
+```yaml
+data:
+  countries: [austria, belgium, kenya, south_africa]
+```
+
+If a country's mask labels use a different convention than the rest (see
+the Kenya case under Status), correct it with `data.class_remap` rather
+than special-casing it in code:
+
+```yaml
+data:
+  class_remap:
+    kenya:
+      3: 255 # unconfirmed area -> ignore, not forced into a real class
+```
+
+Before trusting a concept bank's naming output on real data, sanity-check
+it against known injected biases (no segmentation model or ground truth
+needed):
+
+```
+uv run python scripts/validate_naming_synthetic.py --config configs/standard_cv.yaml
+uv run python scripts/validate_naming_synthetic_ftw.py --config configs/ftw.yaml
 ```
 
 ## Status
