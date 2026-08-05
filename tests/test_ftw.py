@@ -1,22 +1,6 @@
 import numpy as np
 
-from drawthename.data.ftw import classify_tile, remap_classes, to_rgb
-
-
-def test_classify_tile_all_correct():
-    error_mask = np.zeros((4, 4), dtype=bool)
-    assert classify_tile(error_mask) == "all-correct"
-
-
-def test_classify_tile_all_error():
-    error_mask = np.ones((4, 4), dtype=bool)
-    assert classify_tile(error_mask) == "all-error"
-
-
-def test_classify_tile_mixed():
-    error_mask = np.zeros((4, 4), dtype=bool)
-    error_mask[0, 0] = True
-    assert classify_tile(error_mask) == "mixed"
+from drawthename.data.ftw import remap_classes, to_rgb
 
 
 def test_to_rgb_passthrough_for_three_channel():

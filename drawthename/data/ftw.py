@@ -17,14 +17,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 import geopandas as gpd
 import numpy as np
 from ftw_tools.training.datasets import FTW as _FTWTools
 from torch.utils.data import Dataset
-
-TileClassification = Literal["all-correct", "all-error", "mixed"]
 
 # matches the checkpoint's num_classes=3 (label_masks/semantic_3class)
 CLASS_NAMES = {0: "background", 1: "field-interior", 2: "field-boundary"}
@@ -157,16 +154,3 @@ def to_display_rgb(
     only for the embedding/visualization path."""
     stretched = np.clip(image, 0, reflectance_clip) / reflectance_clip
     return (stretched * 255).astype(np.uint8)
-
-
-def classify_tile(error_mask: np.ndarray) -> TileClassification:
-    """Labels a tile all-correct (zero error pixels), all-error (every pixel
-    wrong), or mixed (anything in between -- these are the tiles where
-    intra-tile comparison is meaningful, since they have both error and
-    correct sub-regions to compare)."""
-    error_rate = float(error_mask.mean())
-    if error_rate == 0.0:
-        return "all-correct"
-    if error_rate == 1.0:
-        return "all-error"
-    return "mixed"
