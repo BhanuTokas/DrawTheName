@@ -1,4 +1,7 @@
+import warnings
+
 import numpy as np
+import pytest
 
 from drawthename.ftw_compare import (
     compare_concept_sets,
@@ -198,3 +201,53 @@ def test_domain_shift_candidates_per_pair_isolates_each_pair():
     )
     assert result[("austria", "france")] == ["shared_only_here"]
     assert result[("austria", "kenya")] == ["kenya_specific"]
+
+
+def test_intra_country_direction_excludes_regions_with_no_country():
+    # a region with country=None (e.g. a Standard CV Mode region accidentally
+    # routed in) must not be grouped as if "None" were a real country.
+    error_regions = [
+        _region("t1", "error", country="austria"),
+        _region("t2", "error", country=None),
+    ]
+    correct_regions = [
+        _region("t3", "correct", country="austria"),
+        _region("t4", "correct", country=None),
+    ]
+    error_embeddings = np.array([[1.0, 0.0], [99.0, 99.0]])
+    correct_embeddings = np.array([[0.0, 0.0], [99.0, 99.0]])
+
+    with pytest.warns(UserWarning, match="had no country set"):
+        result = intra_country_direction(
+            error_regions, error_embeddings, correct_regions, correct_embeddings
+        )
+    np.testing.assert_allclose(result, [1.0, 0.0])
+
+
+def test_inter_country_pair_directions_excludes_regions_with_no_country():
+    error_regions = [
+        _region("t1", "error", country="austria"),
+        _region("t2", "error", country=None),
+    ]
+    correct_regions = [_region("t3", "correct", country="france")]
+    error_embeddings = np.array([[1.0, 0.0], [99.0, 99.0]])
+    correct_embeddings = np.array([[0.0, 0.0]])
+
+    with pytest.warns(UserWarning, match="had no country set"):
+        result = inter_country_pair_directions(
+            error_regions, error_embeddings, correct_regions, correct_embeddings
+        )
+    assert set(result.keys()) == {("austria", "france")}
+
+
+def test_group_by_country_silent_when_all_regions_have_a_country():
+    error_regions = [_region("t1", "error", country="austria")]
+    correct_regions = [_region("t2", "correct", country="france")]
+    error_embeddings = np.array([[1.0, 0.0]])
+    correct_embeddings = np.array([[0.0, 0.0]])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        inter_country_pair_directions(
+            error_regions, error_embeddings, correct_regions, correct_embeddings
+        )

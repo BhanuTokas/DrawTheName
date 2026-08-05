@@ -15,12 +15,41 @@ and domain-shift-candidate signal.
 
 from __future__ import annotations
 
+import warnings
 from collections import defaultdict
 
 import numpy as np
 
 from drawthename.naming import bias_direction
 from drawthename.regions import Region
+
+
+def _group_by_country(
+    regions: list[Region], embeddings: np.ndarray, side: str
+) -> dict[str, list[np.ndarray]]:
+    """Groups embeddings by region.country for the country-level comparison
+    functions below (FTW Mode only). Regions with no country set (e.g.
+    Standard CV Mode regions, which never populate Region.country) are
+    excluded rather than silently grouped under a "None" country -- and
+    since that should never happen when these functions are only ever
+    called from run_ftw_pipeline, it's surfaced as a warning (with a count)
+    rather than dropped with no visibility, in case a future caller or
+    dataset loader accidentally routes non-FTW regions through here."""
+    grouped: dict[str, list[np.ndarray]] = defaultdict(list)
+    n_dropped = 0
+    for region, embedding in zip(regions, embeddings, strict=True):
+        if region.country is None:
+            n_dropped += 1
+            continue
+        grouped[region.country].append(embedding)
+    if n_dropped:
+        warnings.warn(
+            f"{n_dropped} {side} region(s) had no country set and were "
+            "excluded from country-level comparison -- these should always "
+            "be FTW Mode regions with Region.country populated",
+            stacklevel=3,
+        )
+    return grouped
 
 
 def intra_tile_direction(
@@ -95,13 +124,12 @@ def intra_country_direction(
     tile-to-tile variation *within* a country from country-level effects,
     the way intra_tile_direction isolates region-to-region variation within
     a tile from tile-level effects. Returns None if no country has both
-    error and correct regions."""
-    error_by_country: dict[str | None, list[np.ndarray]] = defaultdict(list)
-    for region, embedding in zip(error_regions, error_embeddings, strict=True):
-        error_by_country[region.country].append(embedding)
-    correct_by_country: dict[str | None, list[np.ndarray]] = defaultdict(list)
-    for region, embedding in zip(correct_regions, correct_embeddings, strict=True):
-        correct_by_country[region.country].append(embedding)
+    error and correct regions. See _group_by_country re: regions with no
+    country set."""
+    error_by_country = _group_by_country(error_regions, error_embeddings, "error")
+    correct_by_country = _group_by_country(
+        correct_regions, correct_embeddings, "correct"
+    )
 
     shared_countries = set(error_by_country) & set(correct_by_country)
     if not shared_countries:
@@ -128,13 +156,12 @@ def inter_country_direction(
     cross-country signal with them), isolating the component of the
     direction driven specifically by crossing a country boundary. Returns
     None if fewer than two distinct countries are represented across the
-    error and correct pools combined."""
-    error_by_country: dict[str | None, list[np.ndarray]] = defaultdict(list)
-    for region, embedding in zip(error_regions, error_embeddings, strict=True):
-        error_by_country[region.country].append(embedding)
-    correct_by_country: dict[str | None, list[np.ndarray]] = defaultdict(list)
-    for region, embedding in zip(correct_regions, correct_embeddings, strict=True):
-        correct_by_country[region.country].append(embedding)
+    error and correct pools combined. See _group_by_country re: regions with
+    no country set."""
+    error_by_country = _group_by_country(error_regions, error_embeddings, "error")
+    correct_by_country = _group_by_country(
+        correct_regions, correct_embeddings, "correct"
+    )
 
     pair_directions = [
         np.mean(error_by_country[x], axis=0) - np.mean(correct_by_country[y], axis=0)
@@ -170,13 +197,12 @@ def inter_country_pair_directions(
     output from a direction backed by thousands of regions.
 
     Only includes pairs with distinct countries and pools meeting the
-    minimum on each side."""
-    error_by_country: dict[str | None, list[np.ndarray]] = defaultdict(list)
-    for region, embedding in zip(error_regions, error_embeddings, strict=True):
-        error_by_country[region.country].append(embedding)
-    correct_by_country: dict[str | None, list[np.ndarray]] = defaultdict(list)
-    for region, embedding in zip(correct_regions, correct_embeddings, strict=True):
-        correct_by_country[region.country].append(embedding)
+    minimum on each side. See _group_by_country re: regions with no country
+    set."""
+    error_by_country = _group_by_country(error_regions, error_embeddings, "error")
+    correct_by_country = _group_by_country(
+        correct_regions, correct_embeddings, "correct"
+    )
 
     return {
         (x, y): np.mean(error_by_country[x], axis=0)

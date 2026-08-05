@@ -357,7 +357,7 @@ def _name_bias_directions(
     check_tile_confounds: bool = False,
     intra_inter_cos_threshold: float = 0.5,
     concept_comparison_top_k: int = 20,
-    min_pair_region_count: int = 1,
+    min_pair_region_count: int = 1,  # deliberately permissive here for direct/test callers; run_ftw_pipeline always passes the stricter config-driven default (10) documented in configs/ftw.yaml.example
 ) -> tuple[list[NamedDirection], dict[int, int], dict[int, float | None]]:
     """Returns (named_directions, cluster_id_by_region_idx, silhouette_by_class).
     cluster_id_by_region_idx maps a region's index in `regions`/`embeddings` to
@@ -436,6 +436,11 @@ def _name_bias_directions(
             concept_comparison = None
             country_pair_domain_shifts = None
             if check_tile_confounds:
+                # cluster_mask and error_idx are parallel arrays, both
+                # length len(error_embeddings) (cluster_labels was computed
+                # directly on error_embeddings above) -- zip pairs each
+                # cluster_mask entry with the error_idx it corresponds to,
+                # so this recovers exactly the Region objects in this cluster.
                 cluster_regions = [
                     class_regions[i]
                     for local_idx, i in zip(cluster_mask, error_idx, strict=True)
