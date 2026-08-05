@@ -21,7 +21,10 @@ class NamedDirection:
         None  # FTW mode, multi-country runs only -- country-level confound check
     )
     concept_comparison: dict[str, list[str]] | None = (
-        None  # FTW mode, multi-country runs only -- prevalent / tile_sensitive / domain_shift_candidates concept buckets
+        None  # FTW mode, multi-country runs only -- prevalent / tile_sensitive / domain_shift_candidates concept buckets (all cross-country pairs pooled into one direction)
+    )
+    country_pair_domain_shifts: list[dict] | None = (
+        None  # FTW mode, 3+ country runs only -- per-(error_country, correct_country)-pair domain-shift candidates, not pooled, so a single country's distinct shift isn't diluted by averaging with other pairs
     )
 
 

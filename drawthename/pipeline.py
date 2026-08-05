@@ -28,8 +28,10 @@ from drawthename.data.ftw import FTWDataset, to_display_rgb
 from drawthename.embeddings import embed_regions, load_backbone
 from drawthename.ftw_compare import (
     compare_concept_sets,
+    domain_shift_candidates_per_pair,
     flag_confound,
     inter_country_direction,
+    inter_country_pair_directions,
     inter_tile_direction,
     intra_country_direction,
     intra_tile_direction,
@@ -175,6 +177,9 @@ def run_ftw_pipeline(config: dict[str, Any], output_dir: Path) -> None:
             ],
             concept_comparison_top_k=config["ftw_compare"].get(
                 "concept_comparison_top_k", 20
+            ),
+            min_pair_region_count=config["ftw_compare"].get(
+                "min_pair_region_count", 10
             ),
         )
     )
@@ -352,6 +357,7 @@ def _name_bias_directions(
     check_tile_confounds: bool = False,
     intra_inter_cos_threshold: float = 0.5,
     concept_comparison_top_k: int = 20,
+    min_pair_region_count: int = 1,
 ) -> tuple[list[NamedDirection], dict[int, int], dict[int, float | None]]:
     """Returns (named_directions, cluster_id_by_region_idx, silhouette_by_class).
     cluster_id_by_region_idx maps a region's index in `regions`/`embeddings` to
@@ -428,6 +434,7 @@ def _name_bias_directions(
             intra_inter_flag = None
             country_confound_flag = None
             concept_comparison = None
+            country_pair_domain_shifts = None
             if check_tile_confounds:
                 cluster_regions = [
                     class_regions[i]
@@ -473,31 +480,64 @@ def _name_bias_directions(
                         "confound flagged" if confound else "consistent"
                     )
 
-                if (
-                    intra_tile is not None
-                    and intra_country is not None
-                    and inter_country is not None
-                ):
-                    concept_comparison = compare_concept_sets(
-                        retrieve_concepts(
-                            deconfound(intra_tile, global_error_mode.bias_vector),
-                            concept_texts,
-                            concept_embeddings,
-                            top_k=concept_comparison_top_k,
-                        ),
-                        retrieve_concepts(
-                            deconfound(intra_country, global_error_mode.bias_vector),
-                            concept_texts,
-                            concept_embeddings,
-                            top_k=concept_comparison_top_k,
-                        ),
-                        retrieve_concepts(
-                            deconfound(inter_country, global_error_mode.bias_vector),
-                            concept_texts,
-                            concept_embeddings,
-                            top_k=concept_comparison_top_k,
-                        ),
+                if intra_tile is not None and intra_country is not None:
+                    intra_tile_concepts = retrieve_concepts(
+                        deconfound(intra_tile, global_error_mode.bias_vector),
+                        concept_texts,
+                        concept_embeddings,
+                        top_k=concept_comparison_top_k,
                     )
+                    intra_country_concepts = retrieve_concepts(
+                        deconfound(intra_country, global_error_mode.bias_vector),
+                        concept_texts,
+                        concept_embeddings,
+                        top_k=concept_comparison_top_k,
+                    )
+
+                    if inter_country is not None:
+                        concept_comparison = compare_concept_sets(
+                            intra_tile_concepts,
+                            intra_country_concepts,
+                            retrieve_concepts(
+                                deconfound(
+                                    inter_country, global_error_mode.bias_vector
+                                ),
+                                concept_texts,
+                                concept_embeddings,
+                                top_k=concept_comparison_top_k,
+                            ),
+                        )
+
+                    pair_directions = inter_country_pair_directions(
+                        cluster_regions,
+                        cluster_embeds,
+                        correct_regions,
+                        correct_embeddings,
+                        min_region_count=min_pair_region_count,
+                    )
+                    pair_concepts = {
+                        pair: retrieve_concepts(
+                            deconfound(pair_direction, global_error_mode.bias_vector),
+                            concept_texts,
+                            concept_embeddings,
+                            top_k=concept_comparison_top_k,
+                        )
+                        for pair, pair_direction in pair_directions.items()
+                    }
+                    pair_domain_shifts = domain_shift_candidates_per_pair(
+                        intra_tile_concepts, intra_country_concepts, pair_concepts
+                    )
+                    country_pair_domain_shifts = [
+                        {
+                            "error_country": error_country,
+                            "correct_country": correct_country,
+                            "domain_shift_candidates": candidates,
+                        }
+                        for (
+                            error_country,
+                            correct_country,
+                        ), candidates in pair_domain_shifts.items()
+                    ]
 
             named_directions.append(
                 NamedDirection(
@@ -510,6 +550,7 @@ def _name_bias_directions(
                     intra_inter_flag=intra_inter_flag,
                     country_confound_flag=country_confound_flag,
                     concept_comparison=concept_comparison,
+                    country_pair_domain_shifts=country_pair_domain_shifts,
                 )
             )
     return named_directions, cluster_id_by_region_idx, silhouette_by_class
@@ -682,6 +723,7 @@ def _write_bias_directions(
                 "intra_inter_flag": d.intra_inter_flag,
                 "country_confound_flag": d.country_confound_flag,
                 "concept_comparison": d.concept_comparison,
+                "country_pair_domain_shifts": d.country_pair_domain_shifts,
             }
             for d in named_directions
         ],
@@ -721,7 +763,22 @@ def _write_summary(
             "comparisons are allowed to cross a country boundary "
             "(inter-country), absent from both intra-tile and intra-country "
             "-- may reflect a genuine visual difference between countries' "
-            "landscapes rather than a model failure mode as such.\n"
+            "landscapes rather than a model failure mode as such."
+        )
+        lines.append(
+            "- **domain-shift candidates by country pair**: the pooled "
+            "domain-shift-candidates figure above averages every "
+            "cross-country pair into one direction before retrieval, which "
+            "can dilute or cancel a shift specific to just one country pair "
+            "-- this breakdown instead retrieves concepts separately for "
+            "each (error country, correct country) pair, so a single "
+            "country's distinct shift isn't hidden by averaging with "
+            "others. A pair is omitted here if either side has fewer than "
+            "min_pair_region_count regions: retrieve_concepts always "
+            "returns a full top-k list regardless of how many embeddings a "
+            "direction was averaged from, so a country with only a handful "
+            "of regions could otherwise produce a confident-looking "
+            "concept list from essentially a single noisy sample.\n"
         )
     lines.append("## Global Error Mode (shared across classes)")
     lines.append(f"- stability: {global_error_mode.stability:.3f}")
@@ -763,5 +820,12 @@ def _write_summary(
             lines.append(
                 f"- domain-shift candidates (only appear cross-country): {', '.join(cc['domain_shift_candidates']) or 'none'}"
             )
+        if d.country_pair_domain_shifts:
+            lines.append("- domain-shift candidates by country pair (not pooled):")
+            for pair in d.country_pair_domain_shifts:
+                candidates = ", ".join(pair["domain_shift_candidates"]) or "none"
+                lines.append(
+                    f"  - {pair['error_country']} error vs. {pair['correct_country']} correct: {candidates}"
+                )
         lines.append(f"- concepts: {', '.join(d.concepts)}\n")
     path.write_text("\n".join(lines))

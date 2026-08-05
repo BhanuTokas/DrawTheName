@@ -147,6 +147,66 @@ def inter_country_direction(
     return np.mean(pair_directions, axis=0)
 
 
+def inter_country_pair_directions(
+    error_regions: list[Region],
+    error_embeddings: np.ndarray,
+    correct_regions: list[Region],
+    correct_embeddings: np.ndarray,
+    min_region_count: int = 1,
+) -> dict[tuple[str, str], np.ndarray]:
+    """Like inter_country_direction, but returns each (error_country,
+    correct_country) pair's own direction separately instead of averaging
+    them into one vector. Averaging over many pairs (as inter_country_direction
+    does) can suppress a real, country-specific shift when it doesn't point
+    the same way as other countries' pairs -- with N countries contributing
+    up to N*(N-1) pairs, a single country's distinct signal becomes a
+    shrinking fraction of that average as more countries are added.
+
+    min_region_count excludes a pair if either side has fewer than that many
+    regions: retrieve_concepts always returns a full top-k list regardless of
+    how many embeddings a direction was averaged from, so a country with only
+    a handful of regions can otherwise produce a confident-looking concept
+    list from essentially a single noisy sample -- indistinguishable in the
+    output from a direction backed by thousands of regions.
+
+    Only includes pairs with distinct countries and pools meeting the
+    minimum on each side."""
+    error_by_country: dict[str | None, list[np.ndarray]] = defaultdict(list)
+    for region, embedding in zip(error_regions, error_embeddings, strict=True):
+        error_by_country[region.country].append(embedding)
+    correct_by_country: dict[str | None, list[np.ndarray]] = defaultdict(list)
+    for region, embedding in zip(correct_regions, correct_embeddings, strict=True):
+        correct_by_country[region.country].append(embedding)
+
+    return {
+        (x, y): np.mean(error_by_country[x], axis=0)
+        - np.mean(correct_by_country[y], axis=0)
+        for x in error_by_country
+        if len(error_by_country[x]) >= min_region_count
+        for y in correct_by_country
+        if x != y and len(correct_by_country[y]) >= min_region_count
+    }
+
+
+def domain_shift_candidates_per_pair(
+    intra_tile_concepts: list[str],
+    intra_country_concepts: list[str],
+    pair_concepts: dict[tuple[str, str], list[str]],
+) -> dict[tuple[str, str], list[str]]:
+    """For each country pair's own concept list (retrieved from that pair's
+    own direction, not a blended average), returns the concepts unique to
+    that pair -- not in intra-tile or intra-country. This is the per-pair
+    counterpart to compare_concept_sets' domain_shift_candidates, which
+    pools every pair into one direction before retrieval and so can dilute
+    or cancel a shift specific to just one country pair."""
+    intra_tile_set = set(intra_tile_concepts)
+    intra_country_set = set(intra_country_concepts)
+    return {
+        pair: sorted(set(concepts) - intra_tile_set - intra_country_set)
+        for pair, concepts in pair_concepts.items()
+    }
+
+
 def compare_concept_sets(
     intra_tile_concepts: list[str],
     intra_country_concepts: list[str],

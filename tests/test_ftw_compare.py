@@ -2,8 +2,10 @@ import numpy as np
 
 from drawthename.ftw_compare import (
     compare_concept_sets,
+    domain_shift_candidates_per_pair,
     flag_confound,
     inter_country_direction,
+    inter_country_pair_directions,
     inter_tile_direction,
     intra_country_direction,
     intra_tile_direction,
@@ -138,3 +140,61 @@ def test_compare_concept_sets_buckets_correctly():
     assert result["prevalent"] == ["c"]
     assert result["tile_sensitive"] == ["d"]
     assert result["domain_shift_candidates"] == ["e"]
+
+
+def test_inter_country_pair_directions_keeps_pairs_separate():
+    # austria error=[4, 0], austria correct=[0, 0] -- same-country, excluded
+    # france correct=[1, 1], kenya correct=[0, 2]
+    # pairs: (austria, france) -> [4,0]-[1,1] = [3,-1]; (austria, kenya) -> [4,0]-[0,2] = [4,-2]
+    error_regions = [_region("a1", "error", country="austria")]
+    correct_regions = [
+        _region("a2", "correct", country="austria"),
+        _region("f1", "correct", country="france"),
+        _region("k1", "correct", country="kenya"),
+    ]
+    error_embeddings = np.array([[4.0, 0.0]])
+    correct_embeddings = np.array([[0.0, 0.0], [1.0, 1.0], [0.0, 2.0]])
+
+    result = inter_country_pair_directions(
+        error_regions, error_embeddings, correct_regions, correct_embeddings
+    )
+    assert set(result.keys()) == {("austria", "france"), ("austria", "kenya")}
+    np.testing.assert_allclose(result[("austria", "france")], [3.0, -1.0])
+    np.testing.assert_allclose(result[("austria", "kenya")], [4.0, -2.0])
+
+
+def test_inter_country_pair_directions_excludes_thin_countries():
+    # austria: 3 error regions (meets min_region_count=2)
+    # kenya: 1 correct region (below min_region_count=2) -- (austria, kenya) excluded
+    # france: 2 correct regions (meets threshold) -- (austria, france) kept
+    error_regions = [_region(f"a{i}", "error", country="austria") for i in range(3)]
+    correct_regions = [
+        _region("k1", "correct", country="kenya"),
+        _region("f1", "correct", country="france"),
+        _region("f2", "correct", country="france"),
+    ]
+    error_embeddings = np.array([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]])
+    correct_embeddings = np.array([[0.0, 1.0], [0.0, 0.0], [0.0, 0.0]])
+
+    result = inter_country_pair_directions(
+        error_regions,
+        error_embeddings,
+        correct_regions,
+        correct_embeddings,
+        min_region_count=2,
+    )
+    assert set(result.keys()) == {("austria", "france")}
+
+
+def test_domain_shift_candidates_per_pair_isolates_each_pair():
+    pair_concepts = {
+        ("austria", "france"): ["a", "b", "shared_only_here"],
+        ("austria", "kenya"): ["a", "b", "kenya_specific"],
+    }
+    result = domain_shift_candidates_per_pair(
+        intra_tile_concepts=["a"],
+        intra_country_concepts=["b"],
+        pair_concepts=pair_concepts,
+    )
+    assert result[("austria", "france")] == ["shared_only_here"]
+    assert result[("austria", "kenya")] == ["kenya_specific"]
