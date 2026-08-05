@@ -9,17 +9,14 @@ data:
   countries: [austria] # add more (e.g. [austria, france]) to enable the intra/inter-country confound check and concept-set comparison below
   split: val
   limit: null # only process the first N tiles; null for the full split
-  # class_remap: {old_class_id: new_class_id}, per country -- corrects mask
-  # label conventions that don't match the rest (0=background/1=field-interior/
-  # 2=field-boundary). Observed: Kenya's val-split masks are presence-only
-  # annotated (fields confirmed, background not), so unconfirmed area is
-  # labeled 3 rather than 0 -- remap it to 255 (IGNORE_CLASS, excluded from
-  # region extraction and pixel accuracy entirely) rather than forcing it
-  # into any real class. Kenya's 1/2 already match field-interior/boundary,
-  # no shift needed for those.
+  # class_remap: {old_class_id: new_class_id}, per country -- for a genuine
+  # per-country label-convention mismatch. FTW's standard "unknown" class
+  # (raw value 3, matching every 3-class checkpoint's ignore_index=3) is
+  # already excluded from analysis automatically for every country -- no
+  # config needed for that. Example only, not currently needed:
   # class_remap:
-  #   kenya:
-  #     3: 255
+  #   some_country:
+  #     old_id: new_id
 
 prue:
   repo: https://github.com/fieldsoftheworld/ftw-prue

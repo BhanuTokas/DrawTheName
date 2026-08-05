@@ -151,15 +151,16 @@ data:
   countries: [austria, belgium, kenya, south_africa]
 ```
 
-If a country's mask labels use a different convention than the rest (see
-the Kenya case under Status), correct it with `data.class_remap` rather
-than special-casing it in code:
+FTW's standard "unknown" class (raw value `3`) is excluded from analysis
+automatically for every country -- no config needed for that (see Status
+below). For any other genuine per-country label-convention mismatch, use
+`data.class_remap`:
 
 ```yaml
 data:
   class_remap:
-    kenya:
-      3: 255 # unconfirmed area -> ignore, not forced into a real class
+    some_country:
+      old_id: new_id
 ```
 
 Before trusting a concept bank's naming output on real data, sanity-check
@@ -190,18 +191,23 @@ input the original spec assumed. NIR-dropping logic (`to_rgb`) is kept for
 any future checkpoint that does take more bands, but is a no-op against
 this one.
 
-**Phase 2's multi-country analysis surfaced two real data issues, both now
-handled via `data.class_remap` rather than special-cased in code:**
+**Phase 2's multi-country analysis surfaced two real data issues:**
 
-- Kenya's val-split masks are presence-only annotated (fields confirmed,
-  background not), so unconfirmed area is labeled `3` rather than `0` --
-  remapped to `255` (excluded from analysis) rather than forced into any
-  real class. An earlier attempt at remapping `3` into field-boundary
-  manufactured a spurious domain-shift signal that didn't survive
-  correction.
-- Small val splits (e.g. Portugal's 9 tiles, Kenya's confirmed-region count
-  in the single digits) can make a country's own bias direction unreliable
-  on its own -- `ftw_compare.min_pair_region_count` (default 10) excludes
-  any country pair from the per-pair domain-shift breakdown where either
-  side falls below that floor, since concept retrieval returns a
-  full-looking top-k list regardless of how few regions backed it.
+- FTW's 3-class masks reserve a 4th raw value, `3`, for "unknown"/no-data
+  area -- ftw_tools' own training code names its classes
+  `["background", "field", "boundary", "unknown"]`, and every 3-class
+  checkpoint we've checked (including the PRUE checkpoint used here) trains
+  with `ignore_index: 3`. This is a **dataset-wide standard, not a
+  per-country quirk** -- `FTWDataset` remaps it to `IGNORE_CLASS`
+  automatically for every country, no config needed. (An earlier version of
+  this pipeline treated it as a Kenya-specific mask anomaly and required an
+  opt-in `data.class_remap` entry per country; that both missed the real
+  cause and manufactured a spurious domain-shift signal in Kenya's case
+  before being corrected.) `data.class_remap` still exists for any genuine
+  per-country label-convention mismatch, just not for this.
+- Small val splits (e.g. Portugal's 9 tiles) can make a country's own bias
+  direction unreliable on its own -- `ftw_compare.min_pair_region_count`
+  (default 10) excludes any country pair from the per-pair domain-shift
+  breakdown where either side falls below that floor, since concept
+  retrieval returns a full-looking top-k list regardless of how few regions
+  backed it.

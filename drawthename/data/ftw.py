@@ -26,7 +26,17 @@ from torch.utils.data import Dataset
 # matches the checkpoint's num_classes=3 (label_masks/semantic_3class)
 CLASS_NAMES = {0: "background", 1: "field-interior", 2: "field-boundary"}
 
-IGNORE_CLASS = 255  # FTW's 3-class masks have no ignore label; kept for interface parity with Cityscapes
+IGNORE_CLASS = 255  # our internal sentinel (matches Cityscapes' convention)
+
+# FTW's own reserved "unknown" class -- ftw_tools' own training code labels
+# its 3-class scheme ["background", "field", "boundary", "unknown"]
+# (ftw_tools/training/trainers.py), and every 3-class FTW checkpoint we've
+# found -- including the PRUE checkpoint used here -- is trained with
+# ignore_index: 3 (see prue-unet-...-winargb_config.yaml). This is a
+# dataset-wide standard, not a per-country quirk: unconfirmed/no-data area
+# is labeled 3 rather than confidently labeled background (0). Remapped to
+# IGNORE_CLASS for every country unconditionally, below.
+FTW_UNKNOWN_CLASS = 3
 
 # Matches PRUEModel.FTW_REFLECTANCE_SCALE (the value PRUE was trained
 # against); reused here as a simple linear clip+stretch to uint8 for
@@ -60,12 +70,11 @@ class FTWDataset(Dataset):
         class_remap: dict[str, dict[int, int]] | None = None,
     ) -> None:
         """class_remap, if given, maps country -> {old_class_id: new_class_id},
-        applied to that country's ground_truth on load. Some countries' mask
-        exports don't use the same 0=background/1=field-interior/2=field-boundary
-        convention as the rest (e.g. Kenya's val split has been observed to use
-        1/2/3 instead of 0/1/2, with zero background pixels) -- this corrects
-        that per-country, rather than silently mixing incompatible label
-        schemes into one cross-country analysis."""
+        applied to that country's ground_truth on load, on top of the
+        unconditional FTW_UNKNOWN_CLASS -> IGNORE_CLASS remap every country
+        already gets (see FTW_UNKNOWN_CLASS above). Use this for a genuine
+        per-country label-convention mismatch, not for the standard "unknown"
+        class -- that's handled automatically."""
         self.root = Path(root)
         self.countries = [c.lower() for c in countries]
         self.class_remap = {k.lower(): v for k, v in (class_remap or {}).items()}
@@ -111,6 +120,7 @@ class FTWDataset(Dataset):
 
         image = sample["image"].numpy().transpose(1, 2, 0)  # (3, H, W) -> (H, W, 3)
         ground_truth = sample["mask"].numpy().astype(np.uint8)
+        ground_truth = remap_classes(ground_truth, {FTW_UNKNOWN_CLASS: IGNORE_CLASS})
 
         remap = self.class_remap.get(country)
         if remap:
