@@ -16,7 +16,16 @@ class NamedDirection:
     concepts: list[str]
     stability: float
     residual_ratio: float = 1.0  # ||deconfounded|| / ||bias_vector||; near 0 means concepts are ~arbitrary noise, not signal
-    intra_inter_flag: str | None = None  # FTW mode only
+    intra_inter_flag: str | None = None  # FTW mode only -- tile-level confound check
+    country_confound_flag: str | None = (
+        None  # FTW mode, multi-country runs only -- country-level confound check
+    )
+    concept_comparison: dict[str, list[str]] | None = (
+        None  # FTW mode, multi-country runs only -- prevalent / tile_sensitive / domain_shift_candidates concept buckets (all cross-country pairs pooled into one direction)
+    )
+    country_pair_domain_shifts: list[dict] | None = (
+        None  # FTW mode, 3+ country runs only -- per-(error_country, correct_country)-pair domain-shift candidates, not pooled, so a single country's distinct shift isn't diluted by averaging with other pairs
+    )
 
 
 @dataclass

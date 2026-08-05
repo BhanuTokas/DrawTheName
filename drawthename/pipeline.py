@@ -23,7 +23,19 @@ from drawthename.concept_bank import (
     load_concept_bank,
 )
 from drawthename.data.cityscapes import TRAIN_ID_NAMES, CityscapesDataset
+from drawthename.data.ftw import CLASS_NAMES as FTW_CLASS_NAMES
+from drawthename.data.ftw import FTWDataset, to_display_rgb
 from drawthename.embeddings import embed_regions, load_backbone
+from drawthename.ftw_compare import (
+    compare_concept_sets,
+    domain_shift_candidates_per_pair,
+    flag_confound,
+    inter_country_direction,
+    inter_country_pair_directions,
+    inter_tile_direction,
+    intra_country_direction,
+    intra_tile_direction,
+)
 from drawthename.naming import (
     GlobalErrorMode,
     NamedDirection,
@@ -38,7 +50,7 @@ from drawthename.regions import (
     compute_error_mask,
     extract_regions,
 )
-from drawthename.segmentation_model import SegmentationModel
+from drawthename.segmentation_model import PRUEModel, SegmentationModel
 
 
 def run_standard_cv_pipeline(
@@ -89,6 +101,7 @@ def run_standard_cv_pipeline(
             clustering_cfg=config["clustering"],
             naming_cfg=config["naming"],
             output_dir=output_dir,
+            class_names=TRAIN_ID_NAMES,
             plot_max_points=config.get("plots", {}).get("max_points_per_class", 3000),
         )
     )
@@ -106,6 +119,7 @@ def run_standard_cv_pipeline(
         global_error_mode,
         config["naming"]["stability_threshold"],
         output_dir / "summary.md",
+        class_names=TRAIN_ID_NAMES,
         residual_ratio_threshold=config["naming"].get("residual_ratio_threshold", 0.1),
     )
 
@@ -115,7 +129,129 @@ def run_ftw_pipeline(config: dict[str, Any], output_dir: Path) -> None:
     sub-region extraction -> embeddings -> clustering -> intra/inter-tile
     comparison -> bias naming. Writes the same output set as Standard CV Mode,
     plus intra/inter-tile flags in bias_directions.json."""
-    raise NotImplementedError
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset = FTWDataset(
+        Path(config["data"]["root"]),
+        config["data"]["countries"],
+        config["data"]["split"],
+        class_remap=config["data"].get("class_remap"),
+    )
+    segmentation_model = PRUEModel(
+        checkpoint=config["prue"]["checkpoint"], device=config["backbone"]["device"]
+    )
+    backbone = load_backbone(
+        config["backbone"]["name"], device=config["backbone"]["device"]
+    )
+
+    concept_texts = load_concept_bank(Path(config["concept_bank"]))
+    concept_embeddings = center_embeddings(embed_concept_bank(concept_texts, backbone))
+
+    regions, pixel_counts = _extract_all_ftw_regions(
+        dataset,
+        segmentation_model,
+        config["regions"],
+        limit=config["data"].get("limit"),
+    )
+    embeddings = embed_regions(regions, backbone)
+
+    global_error_mode = _compute_global_error_mode(
+        regions, embeddings, concept_texts, concept_embeddings, config["naming"]
+    )
+
+    named_directions, cluster_id_by_region_idx, silhouette_by_class = (
+        _name_bias_directions(
+            regions,
+            embeddings,
+            concept_texts,
+            concept_embeddings,
+            global_error_mode,
+            clustering_cfg=config["clustering"],
+            naming_cfg=config["naming"],
+            output_dir=output_dir,
+            class_names=FTW_CLASS_NAMES,
+            plot_max_points=config.get("plots", {}).get("max_points_per_class", 3000),
+            check_tile_confounds=True,
+            intra_inter_cos_threshold=config["ftw_compare"][
+                "intra_inter_divergence_threshold"
+            ],
+            concept_comparison_top_k=config["ftw_compare"].get(
+                "concept_comparison_top_k", 20
+            ),
+            min_pair_region_count=config["ftw_compare"].get(
+                "min_pair_region_count", 10
+            ),
+        )
+    )
+
+    _write_embeddings(
+        regions, embeddings, cluster_id_by_region_idx, output_dir / "embeddings.npz"
+    )
+    _write_clusters(named_directions, silhouette_by_class, output_dir / "clusters.json")
+    _write_bias_directions(
+        named_directions, global_error_mode, output_dir / "bias_directions.json"
+    )
+    _write_pixel_accuracy(pixel_counts, output_dir / "pixel_accuracy.json")
+    _write_summary(
+        named_directions,
+        global_error_mode,
+        config["naming"]["stability_threshold"],
+        output_dir / "summary.md",
+        class_names=FTW_CLASS_NAMES,
+        residual_ratio_threshold=config["naming"].get("residual_ratio_threshold", 0.1),
+    )
+
+
+def _extract_all_ftw_regions(
+    dataset: FTWDataset,
+    segmentation_model: PRUEModel,
+    regions_cfg: dict[str, Any],
+    limit: int | None = None,
+) -> tuple[list[Region], dict[int, tuple[int, int]]]:
+    """FTW-mode counterpart to _extract_all_regions: same per-class pixel
+    counting and region extraction, but against FTWTile's raw-reflectance
+    image (fed to PRUEModel as-is) and a separately stretched uint8 RGB
+    version (fed to CLIP via extract_regions' crops -- encode_image's PIL
+    conversion needs a standard 0-255 image, not raw reflectance). Each tile
+    is its own image_id/tile_id: FTW tiles don't share a "same source image"
+    grouping the way Cityscapes region subdivisions do."""
+    all_regions: list[Region] = []
+    pixel_counts: dict[int, list[int]] = defaultdict(lambda: [0, 0])
+    num_samples = min(len(dataset), limit) if limit else len(dataset)
+    for index in tqdm(
+        range(num_samples), desc="Running inference + extracting regions"
+    ):
+        tile = dataset[index]
+        prediction = segmentation_model.predict(tile.image)
+        error_mask = compute_error_mask(prediction, tile.ground_truth)
+
+        for class_id in np.unique(tile.ground_truth):
+            if class_id == IGNORE_CLASS:
+                continue
+            class_pixel_mask = tile.ground_truth == class_id
+            counts = pixel_counts[int(class_id)]
+            counts[0] += int(error_mask[class_pixel_mask].sum())
+            counts[1] += int(class_pixel_mask.sum())
+
+        display_image = to_display_rgb(tile.image)
+        all_regions.extend(
+            extract_regions(
+                image=display_image,
+                error_mask=error_mask,
+                ground_truth=tile.ground_truth,
+                image_id=tile.tile_id,
+                min_area_px=regions_cfg["min_area_px"],
+                pad_px_min=regions_cfg["pad_px_min"],
+                pad_frac=regions_cfg["pad_frac"],
+                error_rate_threshold=regions_cfg["error_rate_threshold"],
+                tile_id=tile.tile_id,
+                country=tile.country,
+                subdivision_size=regions_cfg.get("subdivision_size"),
+            )
+        )
+    return all_regions, {
+        class_id: tuple(counts) for class_id, counts in pixel_counts.items()
+    }
 
 
 def _extract_all_regions(
@@ -216,7 +352,12 @@ def _name_bias_directions(
     clustering_cfg: dict[str, Any],
     naming_cfg: dict[str, Any],
     output_dir: Path,
+    class_names: dict[int, str],
     plot_max_points: int = 3000,
+    check_tile_confounds: bool = False,
+    intra_inter_cos_threshold: float = 0.5,
+    concept_comparison_top_k: int = 20,
+    min_pair_region_count: int = 1,  # deliberately permissive here for direct/test callers; run_ftw_pipeline always passes the stricter config-driven default (10) documented in configs/ftw.yaml.example
 ) -> tuple[list[NamedDirection], dict[int, int], dict[int, float | None]]:
     """Returns (named_directions, cluster_id_by_region_idx, silhouette_by_class).
     cluster_id_by_region_idx maps a region's index in `regions`/`embeddings` to
@@ -241,6 +382,7 @@ def _name_bias_directions(
 
         error_embeddings = class_embeddings[error_idx]
         correct_embeddings = class_embeddings[correct_idx]
+        correct_regions = [class_regions[i] for i in correct_idx]
 
         k = select_k_by_silhouette(
             error_embeddings, clustering_cfg["k_min"], clustering_cfg["k_max"]
@@ -262,11 +404,13 @@ def _name_bias_directions(
             correct_embeddings,
             cluster_labels,
             output_dir,
+            class_names,
             plot_max_points,
         )
 
         for cluster_id in range(k):
-            cluster_embeds = error_embeddings[cluster_labels == cluster_id]
+            cluster_mask = cluster_labels == cluster_id
+            cluster_embeds = error_embeddings[cluster_mask]
             if len(cluster_embeds) == 0:
                 continue
             direction = bias_direction(cluster_embeds, correct_embeddings)
@@ -286,6 +430,120 @@ def _name_bias_directions(
                 concept_embeddings,
                 top_k=naming_cfg["top_k_concepts"],
             )
+
+            intra_inter_flag = None
+            country_confound_flag = None
+            concept_comparison = None
+            country_pair_domain_shifts = None
+            if check_tile_confounds:
+                # cluster_mask and error_idx are parallel arrays, both
+                # length len(error_embeddings) (cluster_labels was computed
+                # directly on error_embeddings above) -- zip pairs each
+                # cluster_mask entry with the error_idx it corresponds to,
+                # so this recovers exactly the Region objects in this cluster.
+                cluster_regions = [
+                    class_regions[i]
+                    for local_idx, i in zip(cluster_mask, error_idx, strict=True)
+                    if local_idx
+                ]
+                intra_tile = intra_tile_direction(
+                    cluster_regions, cluster_embeds, correct_regions, correct_embeddings
+                )
+                if intra_tile is None:
+                    intra_inter_flag = (
+                        "insufficient same-tile error+correct overlap to check"
+                    )
+                else:
+                    inter_tile = inter_tile_direction(
+                        cluster_regions,
+                        cluster_embeds,
+                        correct_regions,
+                        correct_embeddings,
+                    )
+                    confound = flag_confound(
+                        intra_tile, inter_tile, threshold=intra_inter_cos_threshold
+                    )
+                    intra_inter_flag = "confound flagged" if confound else "consistent"
+
+                intra_country = intra_country_direction(
+                    cluster_regions, cluster_embeds, correct_regions, correct_embeddings
+                )
+                inter_country = inter_country_direction(
+                    cluster_regions, cluster_embeds, correct_regions, correct_embeddings
+                )
+                if intra_country is None or inter_country is None:
+                    country_confound_flag = (
+                        "insufficient multi-country coverage to check"
+                    )
+                else:
+                    confound = flag_confound(
+                        intra_country,
+                        inter_country,
+                        threshold=intra_inter_cos_threshold,
+                    )
+                    country_confound_flag = (
+                        "confound flagged" if confound else "consistent"
+                    )
+
+                if intra_tile is not None and intra_country is not None:
+                    intra_tile_concepts = retrieve_concepts(
+                        deconfound(intra_tile, global_error_mode.bias_vector),
+                        concept_texts,
+                        concept_embeddings,
+                        top_k=concept_comparison_top_k,
+                    )
+                    intra_country_concepts = retrieve_concepts(
+                        deconfound(intra_country, global_error_mode.bias_vector),
+                        concept_texts,
+                        concept_embeddings,
+                        top_k=concept_comparison_top_k,
+                    )
+
+                    if inter_country is not None:
+                        concept_comparison = compare_concept_sets(
+                            intra_tile_concepts,
+                            intra_country_concepts,
+                            retrieve_concepts(
+                                deconfound(
+                                    inter_country, global_error_mode.bias_vector
+                                ),
+                                concept_texts,
+                                concept_embeddings,
+                                top_k=concept_comparison_top_k,
+                            ),
+                        )
+
+                    pair_directions = inter_country_pair_directions(
+                        cluster_regions,
+                        cluster_embeds,
+                        correct_regions,
+                        correct_embeddings,
+                        min_region_count=min_pair_region_count,
+                    )
+                    pair_concepts = {
+                        pair: retrieve_concepts(
+                            deconfound(pair_direction, global_error_mode.bias_vector),
+                            concept_texts,
+                            concept_embeddings,
+                            top_k=concept_comparison_top_k,
+                        )
+                        for pair, pair_direction in pair_directions.items()
+                    }
+                    pair_domain_shifts = domain_shift_candidates_per_pair(
+                        intra_tile_concepts, intra_country_concepts, pair_concepts
+                    )
+                    country_pair_domain_shifts = [
+                        {
+                            "error_country": error_country,
+                            "correct_country": correct_country,
+                            "domain_shift_candidates": candidates,
+                        }
+                        for (
+                            error_country,
+                            correct_country,
+                        ), candidates in pair_domain_shifts.items()
+                    ]
+
             named_directions.append(
                 NamedDirection(
                     class_id=class_id,
@@ -294,6 +552,10 @@ def _name_bias_directions(
                     concepts=concepts,
                     stability=stability,
                     residual_ratio=residual_ratio,
+                    intra_inter_flag=intra_inter_flag,
+                    country_confound_flag=country_confound_flag,
+                    concept_comparison=concept_comparison,
+                    country_pair_domain_shifts=country_pair_domain_shifts,
                 )
             )
     return named_directions, cluster_id_by_region_idx, silhouette_by_class
@@ -328,6 +590,7 @@ def _plot_class_embeddings(
     correct_embeddings: np.ndarray,
     cluster_labels: np.ndarray,
     output_dir: Path,
+    class_names: dict[int, str],
     max_points: int | None = 3000,
 ) -> None:
     num_clusters = int(cluster_labels.max()) + 1 if len(cluster_labels) else 0
@@ -376,7 +639,7 @@ def _plot_class_embeddings(
         marker="o",
         alpha=0.4,
     )
-    class_name = TRAIN_ID_NAMES.get(class_id, str(class_id))
+    class_name = class_names.get(class_id, str(class_id))
     ax.set_title(f"{class_name} (class_id={class_id})")
     ax.legend()
     fig.savefig(plots_dir / f"class_{class_id}_{class_name}.png", dpi=150)
@@ -404,6 +667,12 @@ def _write_embeddings(
         class_id=np.array([r.class_id for r in regions]),
         pixel_error_rate=np.array([r.pixel_error_rate for r in regions]),
         cluster_id=cluster_id,
+        # "" sentinel, not None: Standard CV Mode never sets Region.country,
+        # and np.array([None, ...]) is object-dtype -- np.load() defaults to
+        # allow_pickle=False since NumPy 1.16.3, so an all-None country
+        # column would make embeddings.npz raise ValueError on read for
+        # anyone who indexes into "country" without passing allow_pickle=True.
+        country=np.array([r.country or "" for r in regions]),
     )
 
 
@@ -462,6 +731,9 @@ def _write_bias_directions(
                 "stability": d.stability,
                 "residual_ratio": d.residual_ratio,
                 "intra_inter_flag": d.intra_inter_flag,
+                "country_confound_flag": d.country_confound_flag,
+                "concept_comparison": d.concept_comparison,
+                "country_pair_domain_shifts": d.country_pair_domain_shifts,
             }
             for d in named_directions
         ],
@@ -474,9 +746,50 @@ def _write_summary(
     global_error_mode: GlobalErrorMode,
     stability_threshold: float,
     path: Path,
+    class_names: dict[int, str],
     residual_ratio_threshold: float = 0.1,
 ) -> None:
     lines = ["# Bias Naming Summary\n"]
+    if any(d.concept_comparison is not None for d in named_directions):
+        lines.append("## How to read the concept-comparison buckets below\n")
+        lines.append(
+            "Each cluster's named concepts are cross-checked against three "
+            "versions of its bias direction, computed at increasingly loose "
+            "comparison scopes:\n"
+        )
+        lines.append(
+            "- **prevalent**: retrieved from all three scopes (intra-tile, "
+            "intra-country, inter-country) -- the strongest evidence of a "
+            "genuine, geography-independent model failure mode."
+        )
+        lines.append(
+            "- **tile-sensitive**: retrieved once tiles within the same "
+            "country are pooled (intra-country) and in inter-country, but "
+            "not from a single tile alone -- plausibly real, just needed a "
+            "less noisy pool to surface."
+        )
+        lines.append(
+            "- **domain-shift candidates**: retrieved *only* once "
+            "comparisons are allowed to cross a country boundary "
+            "(inter-country), absent from both intra-tile and intra-country "
+            "-- may reflect a genuine visual difference between countries' "
+            "landscapes rather than a model failure mode as such."
+        )
+        lines.append(
+            "- **domain-shift candidates by country pair**: the pooled "
+            "domain-shift-candidates figure above averages every "
+            "cross-country pair into one direction before retrieval, which "
+            "can dilute or cancel a shift specific to just one country pair "
+            "-- this breakdown instead retrieves concepts separately for "
+            "each (error country, correct country) pair, so a single "
+            "country's distinct shift isn't hidden by averaging with "
+            "others. A pair is omitted here if either side has fewer than "
+            "min_pair_region_count regions: retrieve_concepts always "
+            "returns a full top-k list regardless of how many embeddings a "
+            "direction was averaged from, so a country with only a handful "
+            "of regions could otherwise produce a confident-looking "
+            "concept list from essentially a single noisy sample.\n"
+        )
     lines.append("## Global Error Mode (shared across classes)")
     lines.append(f"- stability: {global_error_mode.stability:.3f}")
     lines.append(f"- concepts: {', '.join(global_error_mode.concepts)}")
@@ -484,7 +797,7 @@ def _write_summary(
         "- this direction is projected out of every class/cluster direction below before its concepts are retrieved\n"
     )
     for d in sorted(named_directions, key=lambda d: (d.class_id, d.cluster_id)):
-        class_name = TRAIN_ID_NAMES.get(d.class_id, str(d.class_id))
+        class_name = class_names.get(d.class_id, str(d.class_id))
         flags = []
         if d.stability < stability_threshold:
             flags.append("below stability threshold")
@@ -492,11 +805,37 @@ def _write_summary(
             flags.append(
                 "low residual signal -- mostly shared confound, concepts may be near-arbitrary"
             )
+        if d.intra_inter_flag == "confound flagged":
+            flags.append("intra/inter-tile confound flagged")
+        if d.country_confound_flag == "confound flagged":
+            flags.append("intra/inter-country confound flagged")
         flag = f" ({'; '.join(flags)})" if flags else ""
         lines.append(
             f"## {class_name} (class_id={d.class_id}), cluster {d.cluster_id}{flag}"
         )
         lines.append(f"- stability: {d.stability:.3f}")
         lines.append(f"- residual_ratio: {d.residual_ratio:.3f}")
+        if d.intra_inter_flag is not None:
+            lines.append(f"- intra/inter-tile check: {d.intra_inter_flag}")
+        if d.country_confound_flag is not None:
+            lines.append(f"- intra/inter-country check: {d.country_confound_flag}")
+        if d.concept_comparison is not None:
+            cc = d.concept_comparison
+            lines.append(
+                f"- prevalent (survives all scopes): {', '.join(cc['prevalent']) or 'none'}"
+            )
+            lines.append(
+                f"- tile-sensitive (needs cross-tile diversity): {', '.join(cc['tile_sensitive']) or 'none'}"
+            )
+            lines.append(
+                f"- domain-shift candidates (only appear cross-country): {', '.join(cc['domain_shift_candidates']) or 'none'}"
+            )
+        if d.country_pair_domain_shifts:
+            lines.append("- domain-shift candidates by country pair (not pooled):")
+            for pair in d.country_pair_domain_shifts:
+                candidates = ", ".join(pair["domain_shift_candidates"]) or "none"
+                lines.append(
+                    f"  - {pair['error_country']} error vs. {pair['correct_country']} correct: {candidates}"
+                )
         lines.append(f"- concepts: {', '.join(d.concepts)}\n")
     path.write_text("\n".join(lines))

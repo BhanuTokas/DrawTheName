@@ -32,6 +32,7 @@ class Region:
         0,
     )  # (y0, x0, y1, x1), padded, in source-image coords
     tile_id: str | None = None
+    country: str | None = None
 
 
 def compute_error_mask(prediction: np.ndarray, ground_truth: np.ndarray) -> np.ndarray:
@@ -62,6 +63,7 @@ def extract_regions(
     error_rate_threshold: float = 0.5,
     ignore_class: int = IGNORE_CLASS,
     tile_id: str | None = None,
+    country: str | None = None,
     subdivision_size: int | None = None,
 ) -> list[Region]:
     """Connected components per ground-truth class, crops padded bounding boxes,
@@ -123,6 +125,7 @@ def extract_regions(
                         pixel_error_rate=pixel_error_rate,
                         bbox=(y0p, x0p, y1p, x1p),
                         tile_id=tile_id,
+                        country=country,
                     )
                 )
                 region_id += 1

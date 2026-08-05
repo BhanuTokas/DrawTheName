@@ -10,8 +10,11 @@ consumes its predictions (and optionally intermediate embeddings).
 
 - **Standard CV Mode** (`configs/standard_cv.yaml`): validated first, on
   Cityscapes, without tile structure.
-- **FTW Mode** (`configs/ftw.yaml`): extends Standard CV Mode with tile-aware
-  intra-tile vs. inter-tile comparisons to flag geography/date confounds.
+- **FTW Mode** (`configs/ftw.yaml`): extends Standard CV Mode with
+  tile-aware intra-tile vs. inter-tile comparisons (geography/date
+  confounds) and, for multi-country runs, intra-country vs. inter-country
+  comparisons to separate genuine model bias from domain shift between
+  countries.
 
 ## Pipeline
 
@@ -20,7 +23,35 @@ embed regions with a CLIP-family backbone -> cluster per-class error
 embeddings (k-means, silhouette-selected k) -> name each cluster's bias
 direction (mean error - mean correct embedding) via concept-bank retrieval,
 with bootstrap sign-stability validation. FTW Mode additionally compares
-intra-tile vs. inter-tile bias directions to flag tile-level confounds.
+intra-tile vs. inter-tile bias directions to flag tile-level confounds, and
+-- given 2+ countries in `data.countries` -- intra-country vs. inter-country
+bias directions to flag country-level confounds.
+
+FTW Mode's country-level analysis (multi-country runs only):
+
+- `country_confound_flag` per cluster: cosine similarity between the
+  intra-country direction (pools regions within each country, tile identity
+  ignored) and the inter-country direction (pairs regions across distinct
+  countries, same-country pairs excluded) -- low similarity flags a likely
+  country-level confound.
+- `concept_comparison` per cluster: buckets each retrieved concept as
+  *prevalent* (survives intra-tile, intra-country, and inter-country alike),
+  *tile-sensitive* (needs cross-tile diversity to surface but not
+  cross-country), or a *domain-shift candidate* (only appears once
+  comparisons cross a country boundary). This pooled version averages every
+  cross-country pair into one direction before retrieval, which can dilute
+  or fully cancel a shift specific to just one country pair.
+- `country_pair_domain_shifts`: the same domain-shift-candidate concept, but
+  computed separately per (error country, correct country) pair rather than
+  pooled -- so a shift specific to one country isn't hidden by averaging
+  with unrelated pairs. Excludes any pair where either side has fewer than
+  `ftw_compare.min_pair_region_count` regions (default 10), since concept
+  retrieval always returns a full top-k list regardless of how few
+  embeddings a direction was averaged from -- without this floor, a country
+  with only a handful of regions can produce a confident-looking concept
+  list from what's essentially a single noisy sample.
+- `data.class_remap`: per-country `{old_class_id: new_class_id}` correction
+  for mask label conventions that don't match the rest (see Status below).
 
 Primary VLM backbone is CLIP ViT-L/14, chosen from a EuroSAT sanity check
 run in a precursor repo before committing to it here (see `misc/` for the
@@ -53,19 +84,31 @@ Standard CV Mode (implemented) additionally:
 
 ## Layout
 
-- `drawthename/` -- pipeline package: `data/cityscapes.py` (dataloader),
-  `segmentation_model.py` (black-box wrapper), `regions.py` (error mask +
-  connected-component extraction), `embeddings.py` (CLIP backbone),
-  `clustering.py`, `concept_bank.py`, `naming.py` (bias direction,
-  deconfounding, bootstrap stability, concept retrieval), `pipeline.py`
-  (orchestration), `ftw_compare.py` / `data/ftw.py` (Phase 2, stubbed).
+- `drawthename/` -- pipeline package: `data/cityscapes.py` / `data/ftw.py`
+  (dataloaders; `data/ftw.py` also carries each tile's `country` and the
+  `class_remap` correction), `segmentation_model.py` (black-box wrapper:
+  SegFormer for Standard CV Mode, PRUE for FTW Mode), `regions.py` (error
+  mask + connected-component extraction; each `Region` carries `tile_id`
+  and `country`), `embeddings.py` (CLIP backbone), `clustering.py`,
+  `concept_bank.py`, `naming.py` (bias direction, deconfounding, bootstrap
+  stability, concept retrieval), `ftw_compare.py` (intra/inter-tile *and*
+  intra/inter-country confound detection, per-country-pair domain-shift
+  candidates), `pipeline.py` (orchestration).
 - `configs/` -- per-mode hyperparameters and paths.
 - `concept_banks/general_concepts.txt` -- curated for Standard CV Mode:
   Broden concepts filtered to street/urban-plausible ones, a Cityscapes
   class/vehicle-part gap-fill supplement, and hand-written lighting/
-  occlusion/scale/boundary-ambiguity qualifiers. `ftw_concepts.txt` is still
-  a placeholder (Phase 2).
-- `scripts/` -- CLI entry points (`run_standard_cv.py`, `run_ftw.py`).
+  occlusion/scale/boundary-ambiguity qualifiers.
+  `concept_banks/ftw_concepts.txt` -- curated for FTW Mode (~200
+  descriptors): field boundary ambiguity, seasonal variation, cloud
+  cover/shadow, mixed crop types, field size, tillage/harvest state, plus a
+  soil/vegetation and general remote-sensing supplement.
+- `scripts/` -- CLI entry points: `run_standard_cv.py` / `run_ftw.py` (the
+  pipeline itself), `validate_naming_synthetic.py` /
+  `validate_naming_synthetic_ftw.py` (synthetic-bias sanity checks -- inject
+  a known transform, e.g. cloud cover or motion blur, into real crops and
+  confirm the pipeline recovers the matching concept bank entry, without
+  needing a real segmentation model or ground truth).
 - `tests/`
 - `results/` -- pipeline outputs (gitignored): `embeddings.npz`,
   `clusters.json`, `bias_directions.json` (includes the global error mode),
@@ -86,6 +129,49 @@ cp configs/standard_cv.yaml.example configs/standard_cv.yaml
 cp configs/ftw.yaml.example configs/ftw.yaml
 ```
 
+## Usage
+
+```
+uv run python scripts/run_standard_cv.py --config configs/standard_cv.yaml
+uv run python scripts/run_ftw.py --config configs/ftw.yaml
+```
+
+`--config` defaults to `configs/standard_cv.yaml` / `configs/ftw.yaml`
+respectively, so it can be omitted once those files exist. Each run writes
+`embeddings.npz`, `clusters.json`, `bias_directions.json`,
+`pixel_accuracy.json`, `summary.md`, and `plots/` to `output_dir` (set in
+the config).
+
+For FTW Mode, list 2+ countries in `data.countries` to additionally get the
+intra/inter-country confound check and per-country-pair domain-shift
+breakdown described above:
+
+```yaml
+data:
+  countries: [austria, belgium, kenya, south_africa]
+```
+
+FTW's standard "unknown" class (raw value `3`) is excluded from analysis
+automatically for every country -- no config needed for that (see Status
+below). For any other genuine per-country label-convention mismatch, use
+`data.class_remap`:
+
+```yaml
+data:
+  class_remap:
+    some_country:
+      old_id: new_id
+```
+
+Before trusting a concept bank's naming output on real data, sanity-check
+it against known injected biases (no segmentation model or ground truth
+needed):
+
+```
+uv run python scripts/validate_naming_synthetic.py --config configs/standard_cv.yaml
+uv run python scripts/validate_naming_synthetic_ftw.py --config configs/ftw.yaml
+```
+
 ## Status
 
 **Phase 1 (Standard CV Mode) is implemented and validated** end-to-end on
@@ -94,7 +180,34 @@ the full Cityscapes val split (500 images): inference, region extraction
 deconfounding, and concept retrieval all run via `scripts/run_standard_cv.py`
 in roughly 13-17 minutes. `concept_banks/general_concepts.txt` is curated.
 
-**Phase 2 (FTW Mode)** is still stubbed (`run_ftw_pipeline`,
-`drawthename/data/ftw.py`, `drawthename/ftw_compare.py` all raise
-`NotImplementedError`), and its concept bank
-(`concept_banks/ftw_concepts.txt`) is still a placeholder.
+**Phase 2 (FTW Mode) is implemented and validated**, including full runs
+against real multi-country val splits (Austria, Belgium, Kenya, South
+Africa, Portugal), with a curated concept bank
+(`concept_banks/ftw_concepts.txt`). The PRUE checkpoint in use
+(`prue-unet-logcoshdice-augs-efficientnetb3-winargb`) is one of PRUE's own
+ablation variants: single-window, RGB-only (`in_channels=3`,
+`temporal_options=window_a_rgb`) -- not the 4-band RGB+NIR, dual-window
+input the original spec assumed. NIR-dropping logic (`to_rgb`) is kept for
+any future checkpoint that does take more bands, but is a no-op against
+this one.
+
+**Phase 2's multi-country analysis surfaced two real data issues:**
+
+- FTW's 3-class masks reserve a 4th raw value, `3`, for "unknown"/no-data
+  area -- ftw_tools' own training code names its classes
+  `["background", "field", "boundary", "unknown"]`, and every 3-class
+  checkpoint we've checked (including the PRUE checkpoint used here) trains
+  with `ignore_index: 3`. This is a **dataset-wide standard, not a
+  per-country quirk** -- `FTWDataset` remaps it to `IGNORE_CLASS`
+  automatically for every country, no config needed. (An earlier version of
+  this pipeline treated it as a Kenya-specific mask anomaly and required an
+  opt-in `data.class_remap` entry per country; that both missed the real
+  cause and manufactured a spurious domain-shift signal in Kenya's case
+  before being corrected.) `data.class_remap` still exists for any genuine
+  per-country label-convention mismatch, just not for this.
+- Small val splits (e.g. Portugal's 9 tiles) can make a country's own bias
+  direction unreliable on its own -- `ftw_compare.min_pair_region_count`
+  (default 10) excludes any country pair from the per-pair domain-shift
+  breakdown where either side falls below that floor, since concept
+  retrieval returns a full-looking top-k list regardless of how few regions
+  backed it.

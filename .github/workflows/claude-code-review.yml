@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write # read-only silently blocks posting the review -- the job still reports "success" (analysis completes locally), it just never submits anything
       issues: read
       id-token: write
 
