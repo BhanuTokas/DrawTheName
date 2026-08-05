@@ -125,6 +125,21 @@ def test_write_embeddings_includes_cluster_id(tmp_path):
     np.testing.assert_array_equal(data["cluster_id"], [1, -1, -1])
 
 
+def test_write_embeddings_country_loadable_without_allow_pickle(tmp_path):
+    # Standard CV Mode never sets Region.country -- np.array([None, ...]) is
+    # object-dtype, which np.load() can't read back without allow_pickle=True.
+    # _write_embeddings must write a real (empty-string) sentinel instead, so
+    # the file stays loadable with plain np.load().
+    regions = [_make_region("error"), _make_region("correct")]
+    embeddings = np.zeros((2, 4))
+    out_path = tmp_path / "embeddings.npz"
+
+    _write_embeddings(regions, embeddings, {}, out_path)
+
+    data = np.load(out_path)  # no allow_pickle=True -- must not raise
+    np.testing.assert_array_equal(data["country"], ["", ""])
+
+
 def test_write_clusters_includes_silhouette_scores(tmp_path):
     directions = [
         NamedDirection(

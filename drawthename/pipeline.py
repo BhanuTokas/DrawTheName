@@ -667,7 +667,12 @@ def _write_embeddings(
         class_id=np.array([r.class_id for r in regions]),
         pixel_error_rate=np.array([r.pixel_error_rate for r in regions]),
         cluster_id=cluster_id,
-        country=np.array([r.country for r in regions]),
+        # "" sentinel, not None: Standard CV Mode never sets Region.country,
+        # and np.array([None, ...]) is object-dtype -- np.load() defaults to
+        # allow_pickle=False since NumPy 1.16.3, so an all-None country
+        # column would make embeddings.npz raise ValueError on read for
+        # anyone who indexes into "country" without passing allow_pickle=True.
+        country=np.array([r.country or "" for r in regions]),
     )
 
 
