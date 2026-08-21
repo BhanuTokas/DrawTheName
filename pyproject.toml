@@ -35,6 +35,11 @@ dependencies = [
 optional-dependencies.dev = [
   "pytest>=7.4,<9",
   "ruff>=0.1,<1",
+  # only for scripts/build_mapillary_continent_labels.py, a one-off
+  # preprocessing step whose output (drawthename/data/mapillary_vistas_continents.csv)
+  # is already committed -- not needed at runtime, so kept out of the main deps.
+  "reverse-geocoder>=1.5,<2",
+  "pycountry-convert>=0.7,<1",
 ]
 urls.Repository = "https://github.com/btokas/DrawTheName"
 

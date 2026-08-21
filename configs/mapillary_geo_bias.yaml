@@ -1,0 +1,23 @@
+# Replicates "Classification Drives Geographic Bias in Street Scene
+# Segmentation" (Nair, Tseng, Rolf, Tokas, Kerner; CVPRW 2025,
+# arXiv:2412.11061) as an external reliability check on our own tooling.
+mode: mapillary_geo_bias
+
+data:
+  # TBD: update once Mapillary Vistas v1.2 (research/full dataset, combined
+  # training+validation) is downloaded on the HPC side. Expected layout:
+  #   <root>/training/images/<key>.jpg,  <root>/training/labels/<key>.png
+  #   <root>/validation/images/<key>.jpg, <root>/validation/labels/<key>.png
+  root: /path/to/mapillary-vistas
+  # bundled in the repo (drawthename/data/mapillary_vistas_continents.csv);
+  # only override if regenerated via scripts/build_mapillary_continent_labels.py
+  continent_labels: drawthename/data/mapillary_vistas_continents.csv
+
+segmentation_model:
+  # same Cityscapes-trained SegFormer Standard CV Mode already defaults to
+  # (drawthename/segmentation_model.py) -- matches the paper's "Eurocentric
+  # model trained only on Cityscapes" setup.
+  checkpoint: nvidia/segformer-b0-finetuned-cityscapes-1024-1024
+  device: cuda
+
+output_dir: results/mapillary_geo_bias
