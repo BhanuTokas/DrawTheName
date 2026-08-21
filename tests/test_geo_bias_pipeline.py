@@ -44,7 +44,9 @@ def test_run_inference_accumulates_per_continent():
     dataset = _FakeDataset(
         [
             _sample("Europe", ground_truth_class=13),  # car -- model gets it right
-            _sample("Africa", ground_truth_class=14),  # truck -- model predicts car instead
+            _sample(
+                "Africa", ground_truth_class=14
+            ),  # truck -- model predicts car instead
         ]
     )
     accumulator, n_images_by_continent = _run_inference(dataset, _FakeModel())

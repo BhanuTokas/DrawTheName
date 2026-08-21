@@ -30,11 +30,16 @@ class ConfusionAccumulator:
 
     matrices: dict[str, np.ndarray] = field(default_factory=dict)
 
-    def update(self, group: str, ground_truth: np.ndarray, prediction: np.ndarray) -> None:
+    def update(
+        self, group: str, ground_truth: np.ndarray, prediction: np.ndarray
+    ) -> None:
         if group not in self.matrices:
             self.matrices[group] = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=np.int64)
         valid = (ground_truth != IGNORE_INDEX) & (prediction != IGNORE_INDEX)
-        gt, pred = ground_truth[valid].astype(np.int64), prediction[valid].astype(np.int64)
+        gt, pred = (
+            ground_truth[valid].astype(np.int64),
+            prediction[valid].astype(np.int64),
+        )
         flat_index = gt * NUM_CLASSES + pred
         counts = np.bincount(flat_index, minlength=NUM_CLASSES * NUM_CLASSES)
         self.matrices[group] += counts.reshape(NUM_CLASSES, NUM_CLASSES)

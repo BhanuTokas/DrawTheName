@@ -20,7 +20,13 @@ from drawthename.data.mapillary_vistas import (
     SHARED_CLASSES,
     MapillaryVistasDataset,
 )
-from drawthename.geo_bias import ConfusionAccumulator, disp, iou_per_class, merged_iou, pct_reduction
+from drawthename.geo_bias import (
+    ConfusionAccumulator,
+    disp,
+    iou_per_class,
+    merged_iou,
+    pct_reduction,
+)
 from drawthename.segmentation_model import SegmentationModel
 
 

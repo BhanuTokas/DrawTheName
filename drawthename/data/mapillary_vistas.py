@@ -42,7 +42,9 @@ from torch.utils.data import Dataset
 
 IGNORE_INDEX = 255  # matches drawthename.data.cityscapes' convention
 
-DEFAULT_CONTINENT_LABELS_PATH = Path(__file__).parent / "mapillary_vistas_continents.csv"
+DEFAULT_CONTINENT_LABELS_PATH = (
+    Path(__file__).parent / "mapillary_vistas_continents.csv"
+)
 
 # Raw Mapillary Vistas v1.2 label id -> Cityscapes trainId (0-18), matching
 # the id2label ordering published at
