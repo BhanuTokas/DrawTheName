@@ -5,6 +5,7 @@ import pytest
 
 from drawthename.ftw_compare import (
     compare_concept_sets,
+    correct_country_pair_directions,
     domain_shift_candidates_per_pair,
     flag_confound,
     inter_country_direction,
@@ -251,3 +252,28 @@ def test_group_by_country_silent_when_all_regions_have_a_country():
         inter_country_pair_directions(
             error_regions, error_embeddings, correct_regions, correct_embeddings
         )
+
+
+def test_correct_country_pair_directions_differences_correct_means():
+    regions = [
+        _region("t1", "correct", "a"),
+        _region("t2", "correct", "a"),
+        _region("t3", "correct", "b"),
+    ]
+    embeddings = np.array([[1.0, 0.0], [3.0, 0.0], [0.0, 1.0]])
+    directions = correct_country_pair_directions(regions, embeddings)
+    assert set(directions) == {("a", "b"), ("b", "a")}
+    np.testing.assert_allclose(directions[("a", "b")], [2.0, -1.0])
+    np.testing.assert_allclose(directions[("b", "a")], [-2.0, 1.0])
+
+
+def test_correct_country_pair_directions_excludes_thin_countries():
+    regions = [
+        _region("t1", "correct", "a"),
+        _region("t2", "correct", "a"),
+        _region("t3", "correct", "b"),
+    ]
+    embeddings = np.zeros((3, 2))
+    assert (
+        correct_country_pair_directions(regions, embeddings, min_region_count=2) == {}
+    )

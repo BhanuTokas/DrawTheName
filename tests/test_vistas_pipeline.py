@@ -152,6 +152,7 @@ def test_run_vistas_pipeline_end_to_end(tmp_path, monkeypatch):
             "cosine_threshold": 0.9,
             "stability_threshold": 0.95,
             "top_k_concepts": 2,
+            "global_error_mode_per_country": True,
         },
         "geo_compare": {
             "intra_inter_divergence_threshold": 0.5,
@@ -169,6 +170,13 @@ def test_run_vistas_pipeline_end_to_end(tmp_path, monkeypatch):
     assert payload["directions"]
     assert {d["class_id"] for d in payload["directions"]} == {CAR}
     assert all(d["country_confound_flag"] is not None for d in payload["directions"])
+    pairs = [p for d in payload["directions"] for p in d["country_pair_domain_shifts"]]
+    assert pairs
+    assert all(p["error_specific_candidates"] is not None for p in pairs)
+    assert all(
+        set(p["error_specific_candidates"]) <= set(p["domain_shift_candidates"])
+        for p in pairs
+    )
     embeddings = np.load(output_dir / "embeddings.npz")
     assert set(embeddings["country"]) == {"Europe", "Asia"}
     assert "car (class_id=13)" in (output_dir / "summary.md").read_text()

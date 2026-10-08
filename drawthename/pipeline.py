@@ -34,6 +34,7 @@ from drawthename.data.mapillary_vistas import (
 from drawthename.embeddings import ClipLikeBackbone, embed_regions, load_backbone
 from drawthename.ftw_compare import (
     compare_concept_sets,
+    correct_country_pair_directions,
     domain_shift_candidates_per_pair,
     flag_confound,
     inter_country_direction,
@@ -48,6 +49,8 @@ from drawthename.naming import (
     bias_direction,
     bootstrap_sign_stability,
     deconfound,
+    grouped_bias_direction,
+    grouped_bootstrap_sign_stability,
     retrieve_concepts,
 )
 from drawthename.regions import (
@@ -504,7 +507,14 @@ def _compute_global_error_mode(
     "errors tend to be small/blurry/oddly-cropped regardless of class") --
     pooling every class's error/correct regions together, rather than
     averaging the per-cluster vectors, so it isn't skewed by classes that
-    happened to get more clusters."""
+    happened to get more clusters.
+
+    With naming_cfg["global_error_mode_per_country"], it is instead computed
+    within each Region.country and averaged with equal weight per country:
+    when some countries have a higher error share (Vistas: ~50% in Africa vs.
+    ~40% in Europe), the pooled direction partly encodes "looks like those
+    countries", and projecting it out of every cluster would then strip real
+    geographic signal along with the shared confound."""
     error_idx = [i for i, r in enumerate(regions) if r.label == "error"]
     correct_idx = [i for i, r in enumerate(regions) if r.label == "correct"]
     if not error_idx or not correct_idx:
@@ -514,18 +524,59 @@ def _compute_global_error_mode(
             "one of each, or bias_direction silently returns NaN. Check error_rate_threshold "
             "and the dataset/limit being used (this is most likely on a tiny sanity-check run)."
         )
-    direction = bias_direction(embeddings[error_idx], embeddings[correct_idx])
-    stability = bootstrap_sign_stability(
-        embeddings[error_idx],
-        embeddings[correct_idx],
-        n_resamples=naming_cfg["bootstrap_resamples"],
-        cosine_threshold=naming_cfg["cosine_threshold"],
-    )
+    if naming_cfg.get("global_error_mode_per_country"):
+        error_groups, correct_groups = _group_error_correct_by_country(
+            regions, embeddings
+        )
+        direction = grouped_bias_direction(error_groups, correct_groups)
+        stability = grouped_bootstrap_sign_stability(
+            error_groups,
+            correct_groups,
+            n_resamples=naming_cfg["bootstrap_resamples"],
+            cosine_threshold=naming_cfg["cosine_threshold"],
+        )
+    else:
+        direction = bias_direction(embeddings[error_idx], embeddings[correct_idx])
+        stability = bootstrap_sign_stability(
+            embeddings[error_idx],
+            embeddings[correct_idx],
+            n_resamples=naming_cfg["bootstrap_resamples"],
+            cosine_threshold=naming_cfg["cosine_threshold"],
+        )
     concepts = retrieve_concepts(
         direction, concept_texts, concept_embeddings, top_k=naming_cfg["top_k_concepts"]
     )
     return GlobalErrorMode(
         bias_vector=direction, concepts=concepts, stability=stability
+    )
+
+
+def _group_error_correct_by_country(
+    regions: list[Region], embeddings: np.ndarray
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    """Parallel per-country (error, correct) embedding lists, keeping only
+    countries with at least one region of each label."""
+    by_country: dict[str, dict[str, list[int]]] = defaultdict(
+        lambda: {"error": [], "correct": []}
+    )
+    for i, region in enumerate(regions):
+        if region.country is None:
+            raise ValueError(
+                "global_error_mode_per_country needs Region.country on every "
+                f"region, but region {i} ({region.image_id}) has none"
+            )
+        by_country[region.country][region.label].append(i)
+    countries = sorted(
+        c for c, idx in by_country.items() if idx["error"] and idx["correct"]
+    )
+    if not countries:
+        raise ValueError(
+            "global_error_mode_per_country: no country has both error and "
+            "correct regions"
+        )
+    return (
+        [embeddings[by_country[c]["error"]] for c in countries],
+        [embeddings[by_country[c]["correct"]] for c in countries],
     )
 
 
@@ -718,17 +769,42 @@ def _name_bias_directions(
                     pair_domain_shifts = domain_shift_candidates_per_pair(
                         intra_tile_concepts, intra_country_concepts, pair_concepts
                     )
-                    country_pair_domain_shifts = [
-                        {
-                            "error_country": error_country,
-                            "correct_country": correct_country,
-                            "domain_shift_candidates": candidates,
-                        }
-                        for (
-                            error_country,
-                            correct_country,
-                        ), candidates in pair_domain_shifts.items()
-                    ]
+                    baseline_directions = correct_country_pair_directions(
+                        correct_regions,
+                        correct_embeddings,
+                        min_region_count=min_pair_region_count,
+                    )
+                    baseline_concepts = {
+                        pair: retrieve_concepts(
+                            deconfound(
+                                baseline_directions[pair],
+                                global_error_mode.bias_vector,
+                            ),
+                            concept_texts,
+                            concept_embeddings,
+                            top_k=concept_comparison_top_k,
+                        )
+                        for pair in pair_domain_shifts
+                        if pair in baseline_directions
+                    }
+                    country_pair_domain_shifts = []
+                    for pair, candidates in pair_domain_shifts.items():
+                        # baseline is None when pair[0] has too few correct
+                        # regions for a scenery baseline
+                        baseline = baseline_concepts.get(pair)
+                        country_pair_domain_shifts.append(
+                            {
+                                "error_country": pair[0],
+                                "correct_country": pair[1],
+                                "domain_shift_candidates": candidates,
+                                "scenery_baseline_concepts": baseline,
+                                "error_specific_candidates": (
+                                    None
+                                    if baseline is None
+                                    else sorted(set(candidates) - set(baseline))
+                                ),
+                            }
+                        )
 
             named_directions.append(
                 NamedDirection(
@@ -974,7 +1050,16 @@ def _write_summary(
             "returns a full top-k list regardless of how many embeddings a "
             "direction was averaged from, so a country with only a handful "
             "of regions could otherwise produce a confident-looking "
-            "concept list from essentially a single noisy sample.\n"
+            "concept list from essentially a single noisy sample."
+        )
+        lines.append(
+            "- **error-specific vs. scenery**: each (error country, correct "
+            "country) direction mixes the error country's failures with how "
+            "the two countries simply look different. Each pair line lists "
+            "first the candidates that are *not* also retrieved from the "
+            "same class's correct-vs-correct direction between those two "
+            "countries (error-specific), then in brackets the ones that are "
+            "(scenery: present even where the model gets it right).\n"
         )
     lines.append("## Global Error Mode (shared across classes)")
     lines.append(f"- stability: {global_error_mode.stability:.3f}")
@@ -1019,9 +1104,16 @@ def _write_summary(
         if d.country_pair_domain_shifts:
             lines.append("- domain-shift candidates by country pair (not pooled):")
             for pair in d.country_pair_domain_shifts:
-                candidates = ", ".join(pair["domain_shift_candidates"]) or "none"
+                label = f"{pair['error_country']} error vs. {pair['correct_country']} correct"
+                specific = pair.get("error_specific_candidates")
+                if specific is None:
+                    candidates = ", ".join(pair["domain_shift_candidates"]) or "none"
+                    lines.append(f"  - {label}: {candidates} (no scenery baseline)")
+                    continue
+                scenery = sorted(set(pair["domain_shift_candidates"]) - set(specific))
                 lines.append(
-                    f"  - {pair['error_country']} error vs. {pair['correct_country']} correct: {candidates}"
+                    f"  - {label}: {', '.join(specific) or 'none'}"
+                    f" [scenery: {', '.join(scenery) or 'none'}]"
                 )
         lines.append(f"- concepts: {', '.join(d.concepts)}\n")
     path.write_text("\n".join(lines))

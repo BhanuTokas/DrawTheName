@@ -42,6 +42,7 @@ naming:
   stability_threshold: 0.95
   residual_ratio_threshold: 0.1 # flag a direction in summary.md when ||deconfounded|| / ||raw|| falls below this -- concepts are ~arbitrary noise, not signal
   top_k_concepts: 10
+  global_error_mode_per_country: true # compute the shared error direction within each continent and average them equally -- errors make up ~50% of regions in Africa vs. ~40% in Europe, so a pooled direction partly encodes "looks like Africa/Asia" and projecting it out would strip real geographic signal
 
 geo_compare:
   intra_inter_divergence_threshold: 0.5 # cosine similarity below this between intra-image/inter-image (or intra-continent/inter-continent) directions flags a likely confound

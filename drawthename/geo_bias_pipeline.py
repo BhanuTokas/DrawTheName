@@ -99,6 +99,12 @@ def _compute_results(
         "n_images_by_continent": n_images_by_continent,
         "continents": continents,
         "classes": per_class,
+        # raw pixel counts behind every number above, so which class each
+        # class is confused with (not just how much) can be read off later
+        "confusion_matrices": {
+            "note": "per continent, rows = ground-truth trainId, cols = predicted trainId (Cityscapes 0-18), pixel counts",
+            "by_continent": {c: accumulator.matrices[c].tolist() for c in continents},
+        },
     }
 
 

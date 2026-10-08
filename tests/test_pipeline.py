@@ -45,6 +45,52 @@ def test_compute_global_error_mode_raises_when_no_correct_regions():
         )
 
 
+def test_compute_global_error_mode_per_country_cancels_country_mix():
+    # Within each country, errors sit +1 along axis 0 from corrects. Country
+    # "b" also sits +5 along axis 1 and holds most of the errors, so pooling
+    # tilts the direction toward axis 1 ("looks like b"); per-country doesn't.
+    def region(label, country):
+        r = _make_region(label)
+        r.country = country
+        return r
+
+    regions = (
+        [region("error", "a")]
+        + [region("correct", "a")] * 9
+        + [region("error", "b")] * 9
+        + [region("correct", "b")]
+    )
+    embeddings = np.array(
+        [[1.0, 0.0]] + [[0.0, 0.0]] * 9 + [[1.0, 5.0]] * 9 + [[0.0, 5.0]]
+    )
+    concepts, concept_embeddings = ["x"], np.ones((1, 2))
+
+    pooled = _compute_global_error_mode(
+        regions, embeddings, concepts, concept_embeddings, _NAMING_CFG
+    )
+    per_country = _compute_global_error_mode(
+        regions,
+        embeddings,
+        concepts,
+        concept_embeddings,
+        {**_NAMING_CFG, "global_error_mode_per_country": True},
+    )
+    assert pooled.bias_vector[1] > 1.0
+    np.testing.assert_allclose(per_country.bias_vector, [1.0, 0.0])
+
+
+def test_compute_global_error_mode_per_country_requires_country():
+    regions = [_make_region("error"), _make_region("correct")]
+    with pytest.raises(ValueError, match="needs Region.country"):
+        _compute_global_error_mode(
+            regions,
+            np.zeros((2, 8)),
+            ["x"],
+            np.zeros((1, 8)),
+            {**_NAMING_CFG, "global_error_mode_per_country": True},
+        )
+
+
 def test_stratified_subsample_noop_when_under_budget():
     groups = [np.zeros((10, 4)), np.zeros((5, 4))]
     result = _stratified_subsample(groups, max_total=100, rng=np.random.default_rng(0))

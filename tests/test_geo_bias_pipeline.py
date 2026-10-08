@@ -111,3 +111,15 @@ def test_compute_results_json_serializable():
     accumulator.update("Europe", np.array([13]), np.array([13]))
     results = _compute_results(accumulator, {"Europe": 1})
     json.dumps(results)  # raises if anything is a bare numpy type
+
+
+def test_compute_results_includes_confusion_matrices():
+    accumulator = ConfusionAccumulator()
+    accumulator.update("Africa", np.array([12, 12, 12]), np.array([18, 18, 12]))
+
+    results = _compute_results(accumulator, {"Africa": 1})
+
+    matrix = np.array(results["confusion_matrices"]["by_continent"]["Africa"])
+    assert matrix.shape == (19, 19)
+    assert matrix[12, 18] == 2  # rider pixels predicted as bicycle
+    assert matrix[12, 12] == 1

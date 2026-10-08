@@ -214,6 +214,31 @@ def inter_country_pair_directions(
     }
 
 
+def correct_country_pair_directions(
+    correct_regions: list[Region],
+    correct_embeddings: np.ndarray,
+    min_region_count: int = 1,
+) -> dict[tuple[str, str], np.ndarray]:
+    """(correct mean in country X) - (correct mean in country Y) for every
+    ordered pair of distinct countries with at least min_region_count
+    correct regions each: the scenery baseline for
+    inter_country_pair_directions. Its (X error, Y correct) direction mixes
+    "X's errors" with "X looks different from Y"; this pair's direction has
+    only the second part, so a concept retrieved from both reflects the
+    countries' appearance rather than where the model fails."""
+    correct_by_country = _group_by_country(
+        correct_regions, correct_embeddings, "correct"
+    )
+    return {
+        (x, y): np.mean(correct_by_country[x], axis=0)
+        - np.mean(correct_by_country[y], axis=0)
+        for x in correct_by_country
+        if len(correct_by_country[x]) >= min_region_count
+        for y in correct_by_country
+        if x != y and len(correct_by_country[y]) >= min_region_count
+    }
+
+
 def domain_shift_candidates_per_pair(
     intra_tile_concepts: list[str],
     intra_country_concepts: list[str],

@@ -5,6 +5,8 @@ from drawthename.naming import (
     bias_direction,
     bootstrap_sign_stability,
     deconfound,
+    grouped_bias_direction,
+    grouped_bootstrap_sign_stability,
     retrieve_concepts,
 )
 
@@ -57,3 +59,21 @@ def test_retrieve_concepts_picks_closest_by_cosine_similarity():
     concept_embeddings = np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]])
     top = retrieve_concepts(bias_vector, concept_texts, concept_embeddings, top_k=1)
     assert top == ["aligned"]
+
+
+def test_grouped_bias_direction_weights_groups_equally():
+    # group a: direction (1, 0) from 1 vs 1 points; group b: (0, 1) from 9 vs 1
+    error_groups = [np.array([[1.0, 0.0]]), np.zeros((9, 2)) + [0.0, 1.0]]
+    correct_groups = [np.zeros((1, 2)), np.zeros((1, 2))]
+    direction = grouped_bias_direction(error_groups, correct_groups)
+    np.testing.assert_allclose(direction, [0.5, 0.5])
+
+
+def test_grouped_bootstrap_sign_stability_high_for_clear_separation():
+    rng = np.random.default_rng(0)
+    error_groups = [rng.normal(size=(50, 8)) + 3 for _ in range(2)]
+    correct_groups = [rng.normal(size=(50, 8)) for _ in range(2)]
+    assert (
+        grouped_bootstrap_sign_stability(error_groups, correct_groups, n_resamples=100)
+        > 0.95
+    )

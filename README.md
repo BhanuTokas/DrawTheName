@@ -62,6 +62,17 @@ FTW Mode's country-level analysis (multi-country runs only):
   embeddings a direction was averaged from -- without this floor, a country
   with only a handful of regions can produce a confident-looking concept
   list from what's essentially a single noisy sample.
+  Each pair's candidates are also split into *error-specific* and
+  *scenery*: a (country X error, country Y correct) direction mixes X's
+  failures with how X and Y simply look different, so candidates also
+  retrieved from the same class's X-correct-vs-Y-correct direction are
+  reported as scenery (`scenery_baseline_concepts`,
+  `error_specific_candidates` in `bias_directions.json`).
+- `naming.global_error_mode_per_country` (off by default; on in Vistas
+  Mode): computes the global error mode within each country and averages
+  with equal weight, so countries with a higher error share can't tilt it
+  toward their own appearance -- otherwise projecting it out of every
+  cluster also strips real geographic signal.
 - `data.class_remap`: per-country `{old_class_id: new_class_id}` correction
   for mask label conventions that don't match the rest (see Status below).
 

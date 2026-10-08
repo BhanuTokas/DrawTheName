@@ -71,20 +71,68 @@ def bootstrap_sign_stability(
     same computation, dramatically faster once pools reach the thousands."""
     rng = np.random.default_rng(seed)
     full_direction = bias_direction(error_embeddings, correct_embeddings)
+    directions = _resampled_means(error_embeddings, n_resamples, rng) - (
+        _resampled_means(correct_embeddings, n_resamples, rng)
+    )  # (n_resamples, dim)
+    return _fraction_aligned(directions, full_direction, cosine_threshold)
+
+
+def grouped_bias_direction(
+    error_groups: list[np.ndarray], correct_groups: list[np.ndarray]
+) -> np.ndarray:
+    """Equal-weight mean over groups (e.g. continents) of each group's own
+    bias_direction -- unlike pooling every group's embeddings into one
+    bias_direction, a group whose regions are both more numerous and more
+    error-prone can't tilt the result toward "looks like that group"."""
+    return np.mean(
+        [
+            bias_direction(error, correct)
+            for error, correct in zip(error_groups, correct_groups, strict=True)
+        ],
+        axis=0,
+    )
+
+
+def grouped_bootstrap_sign_stability(
+    error_groups: list[np.ndarray],
+    correct_groups: list[np.ndarray],
+    n_resamples: int = 500,
+    cosine_threshold: float = 0.9,
+    seed: int = 0,
+) -> float:
+    """bootstrap_sign_stability's counterpart for grouped_bias_direction:
+    resamples within each group (so every resample keeps the same groups and
+    group sizes), then averages the groups' resampled directions with equal
+    weight, exactly as grouped_bias_direction does for the full sample."""
+    rng = np.random.default_rng(seed)
+    full_direction = grouped_bias_direction(error_groups, correct_groups)
+    directions = np.mean(
+        [
+            _resampled_means(error, n_resamples, rng)
+            - _resampled_means(correct, n_resamples, rng)
+            for error, correct in zip(error_groups, correct_groups, strict=True)
+        ],
+        axis=0,
+    )  # (n_resamples, dim)
+    return _fraction_aligned(directions, full_direction, cosine_threshold)
+
+
+def _resampled_means(
+    embeddings: np.ndarray, n_resamples: int, rng: np.random.Generator
+) -> np.ndarray:
+    """(n_resamples, dim) bootstrap means of embeddings, drawn as
+    multinomial per-point counts (see bootstrap_sign_stability)."""
+    n = len(embeddings)
+    counts = rng.multinomial(n, np.full(n, 1 / n), size=n_resamples)
+    return (counts @ embeddings) / n
+
+
+def _fraction_aligned(
+    directions: np.ndarray, full_direction: np.ndarray, cosine_threshold: float
+) -> float:
+    """Fraction of rows of directions whose cosine similarity with
+    full_direction exceeds cosine_threshold."""
     full_norm = full_direction / (np.linalg.norm(full_direction) + 1e-12)
-
-    n_error, n_correct = len(error_embeddings), len(correct_embeddings)
-    error_counts = rng.multinomial(
-        n_error, np.full(n_error, 1 / n_error), size=n_resamples
-    )
-    correct_counts = rng.multinomial(
-        n_correct, np.full(n_correct, 1 / n_correct), size=n_resamples
-    )
-
-    error_means = (error_counts @ error_embeddings) / n_error
-    correct_means = (correct_counts @ correct_embeddings) / n_correct
-    directions = error_means - correct_means  # (n_resamples, dim)
-
     norms = np.linalg.norm(directions, axis=1) + 1e-12
     cos_sims = (directions @ full_norm) / norms
     return float(np.mean(cos_sims > cosine_threshold))
