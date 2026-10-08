@@ -17,14 +17,15 @@ derived from it: offline reverse-geocoding (no network calls), 6-continent
 scheme (Europe/North America/South America/Africa/Asia/Oceania), 11,300 of
 11,300 coordinate-bearing rows successfully labeled.
 
-Directory layout assumed (the standard public v1.2 research-dataset layout;
-not yet verified against a local copy since Vistas isn't downloaded on this
-machine -- confirm against the actual HPC download before a real run):
+Directory layout assumed (either public release; see _labels_dir):
     <root>/training/images/<key>.jpg
-    <root>/training/labels/<key>.png     (single-channel, pixel value = raw
-                                           Vistas v1.2 class id 0-64)
+    <root>/training/v1.2/labels/<key>.png  (combined v2.0 release; or
+                                             <root>/training/labels/ in the
+                                             older v1.2-only release --
+                                             single-channel, pixel value =
+                                             raw Vistas v1.2 class id 0-64)
     <root>/validation/images/<key>.jpg
-    <root>/validation/labels/<key>.png
+    <root>/validation/v1.2/labels/<key>.png
 Only training+validation are used (matching the paper: Vistas' testing split
 ships images with no public ground truth), combined into one pool the same
 way the continent CSV combines them.
@@ -129,6 +130,15 @@ class MapillaryVistasSample:
     continent: str
 
 
+def _labels_dir(split_dir: Path) -> Path:
+    """v1.2 label dir for a split: the combined v2.0 release (which ships
+    config_v1.2.json and config_v2.0.json side by side) nests each version's
+    labels under <split>/v1.2/labels, while the older v1.2-only release used
+    <split>/labels directly."""
+    nested = split_dir / "v1.2" / "labels"
+    return nested if nested.is_dir() else split_dir / "labels"
+
+
 class MapillaryVistasDataset(Dataset):
     """Combined training+validation split, restricted to images with a known
     continent (drops the ~8,700/20,000 images the companion geolocation file
@@ -146,7 +156,7 @@ class MapillaryVistasDataset(Dataset):
         self._samples: list[tuple[Path, Path, str, str]] = []
         for split in splits:
             images_dir = self.root / split / "images"
-            labels_dir = self.root / split / "labels"
+            labels_dir = _labels_dir(self.root / split)
             for image_path in sorted(images_dir.glob("*.jpg")):
                 image_id = image_path.stem
                 continent = continent_by_id.get(image_id)

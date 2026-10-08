@@ -127,6 +127,7 @@ templates and fill in your local path:
 ```
 cp configs/standard_cv.yaml.example configs/standard_cv.yaml
 cp configs/ftw.yaml.example configs/ftw.yaml
+cp configs/mapillary_geo_bias.yaml.example configs/mapillary_geo_bias.yaml
 ```
 
 ## Usage

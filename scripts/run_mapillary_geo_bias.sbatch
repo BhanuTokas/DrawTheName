@@ -6,7 +6,8 @@
 #
 # One-time setup on a login node before the first submission:
 #   uv sync
-#   # then update configs/mapillary_geo_bias.yaml's data.root to wherever
+#   cp configs/mapillary_geo_bias.yaml.example configs/mapillary_geo_bias.yaml
+#   # then set its data.root to wherever
 #   # Vistas gets downloaded (v1.2, combined training+validation).
 #
 # Submit with: sbatch scripts/run_mapillary_geo_bias.sbatch
