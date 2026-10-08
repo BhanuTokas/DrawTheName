@@ -8,9 +8,9 @@ Not run automatically -- its output, drawthename/data/mapillary_vistas_continent
 is already committed. Re-run only if the upstream Zenodo file changes.
 Needs the dev extras: `uv sync --extra dev`.
 
-Of the CSV's 20,000 rows, only ~11,300 have coordinates; that count matches
-the paper's own reported post-preprocessing image count, so this is very
-likely the exact metadata source the paper used.
+Of the CSV's 20,000 rows, only ~11,300 have coordinates. The paper reports
+10,547 images after its own preprocessing (Table 4), a further-filtered
+subset whose extra filtering steps it doesn't spell out.
 """
 
 from __future__ import annotations

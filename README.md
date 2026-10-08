@@ -15,6 +15,18 @@ consumes its predictions (and optionally intermediate embeddings).
   confounds) and, for multi-country runs, intra-country vs. inter-country
   comparisons to separate genuine model bias from domain shift between
   countries.
+- **Mapillary geo-bias replication** (`configs/mapillary_geo_bias.yaml`):
+  reimplements the per-continent IoU / class-merging metrics of
+  "Classification Drives Geographic Bias in Street Scene Segmentation"
+  (arXiv:2412.11061) on Mapillary Vistas. Independent of the naming
+  pipeline -- it checks our data, label mapping and model against the
+  paper's published finding.
+- **Vistas Mode** (`configs/vistas.yaml`): runs the naming pipeline on
+  the same Vistas images and SegFormer, restricted to the paper's 7 shared
+  classes, to test whether it names the class confusions the replication
+  measures without being told. Reuses FTW Mode's confound checks with
+  continents in place of countries and single images in place of tiles,
+  so "country" and "tile" in its `summary.md` mean continent and image.
 
 ## Pipeline
 
@@ -128,6 +140,7 @@ templates and fill in your local path:
 cp configs/standard_cv.yaml.example configs/standard_cv.yaml
 cp configs/ftw.yaml.example configs/ftw.yaml
 cp configs/mapillary_geo_bias.yaml.example configs/mapillary_geo_bias.yaml
+cp configs/vistas.yaml.example configs/vistas.yaml
 ```
 
 ## Usage
@@ -135,10 +148,17 @@ cp configs/mapillary_geo_bias.yaml.example configs/mapillary_geo_bias.yaml
 ```
 uv run python scripts/run_standard_cv.py --config configs/standard_cv.yaml
 uv run python scripts/run_ftw.py --config configs/ftw.yaml
+uv run python scripts/run_mapillary_geo_bias.py --config configs/mapillary_geo_bias.yaml
+uv run python scripts/run_vistas.py --config configs/vistas.yaml
 ```
 
-`--config` defaults to `configs/standard_cv.yaml` / `configs/ftw.yaml`
-respectively, so it can be omitted once those files exist. Each run writes
+On ASU Sol, the last two have SLURM job scripts:
+`sbatch scripts/run_mapillary_geo_bias.sh` and `sbatch scripts/run_vistas.sh`
+(submit from the repo root, with `logs/` already created).
+
+`--config` defaults to `configs/<mode>.yaml` for each script, so it can be
+omitted once those files exist. The geo-bias replication writes
+`geo_bias_results.json`; every other mode writes
 `embeddings.npz`, `clusters.json`, `bias_directions.json`,
 `pixel_accuracy.json`, `summary.md`, and `plots/` to `output_dir` (set in
 the config).

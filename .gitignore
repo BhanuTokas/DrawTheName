@@ -224,6 +224,7 @@ results/
 configs/standard_cv.yaml
 configs/ftw.yaml
 configs/mapillary_geo_bias.yaml
+configs/vistas.yaml
 .vscode/
 logs/
 scratchpad/

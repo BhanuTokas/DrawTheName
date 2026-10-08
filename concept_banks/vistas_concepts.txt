@@ -1,0 +1,183 @@
+# Vistas Mode concept bank: concept_banks/general_concepts.txt (copied
+# verbatim below its own header) plus a supplement for the geo-bias paper's
+# 7 classes. general_concepts.txt names car/bus/truck/bicycle/person but not
+# motorcycle or rider, and has no vehicle types common outside Europe --
+# without those, the pipeline would have no words for the class confusions
+# and regional vehicle differences it's being tested on.
+
+# --- Broden, street-relevant subset (82 concepts) ---
+airplane
+arm
+awning
+balcony
+base
+bench
+bicycle
+bird
+black
+blotchy
+blue
+blurriness
+body
+brick
+bridge
+building
+bumper
+bus
+bush
+cap
+car
+cat
+chain wheel
+chimney
+column
+concrete
+dog
+door
+door frame
+ear
+earth
+engine
+eye
+fabric
+fence
+field
+flag
+flower
+flowerpot
+fluorescent
+foot
+glass
+grass
+green
+ground
+hair
+hand
+handle
+handle bar
+head
+headlight
+hill
+house
+lamp
+leg
+light
+manhole
+metal
+minibike
+mirror
+motorbike
+mountain
+mouth
+neck
+nose
+painted
+palm
+pane
+path
+person
+pillar
+pipe
+plant
+polka dots
+red
+sand
+snow
+stairs
+street
+stripes
+tree
+water
+
+# --- Cityscapes gap-fill / vehicle parts (26 concepts) ---
+cloud
+construction barrier
+crosswalk
+curb
+exhaust pipe
+guardrail
+license plate
+pole
+pothole
+rearview mirror
+road
+road marking
+sidewalk
+sky
+streetlight
+taillight
+tire
+traffic light
+traffic sign
+train
+tram
+truck
+turn signal
+wall
+wheel
+windshield
+
+# --- Hand-written qualifiers (31 concepts) ---
+low contrast lighting
+overexposed highlights
+underexposed shadows
+harsh direct sunlight
+dim lighting
+backlit silhouette
+glare and reflections
+nighttime lighting
+partial occlusion
+heavily occluded object
+object cut off at image edge
+overlapping objects
+object occluded by another object
+small distant object
+large object filling the frame
+object at unusual scale
+tiny object far from camera
+ambiguous object boundary
+blurred object edges
+object boundary blending into background
+cluttered background near object boundary
+object boundary occluded by another object
+motion blur
+out-of-focus blur
+low resolution texture
+repetitive pattern texture
+textureless surface
+rain on the lens
+wet reflective road surface
+foggy conditions
+shadow cast across the scene
+
+# --- Vistas supplement: geo-bias classes, non-European vehicles, scene context (30 concepts) ---
+motorcycle
+rider
+cyclist
+motorcyclist
+scooter
+moped
+auto rickshaw
+tuk-tuk
+cycle rickshaw
+cargo tricycle
+minibus
+shared taxi van
+jeepney
+pickup truck
+delivery van
+overloaded truck
+colorfully painted truck
+double-decker bus
+school bus
+person riding a motorcycle
+person riding a bicycle
+person pushing a bicycle
+motorcycle carrying several passengers
+crowd of motorcycles
+street vendor
+unpaved dirt road
+rural road
+dense street market
+informal roadside stalls
+left-hand traffic

@@ -13,6 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import umap
+from PIL import Image
 from sklearn.metrics import silhouette_score
 from tqdm import tqdm
 
@@ -25,7 +26,12 @@ from drawthename.concept_bank import (
 from drawthename.data.cityscapes import TRAIN_ID_NAMES, CityscapesDataset
 from drawthename.data.ftw import CLASS_NAMES as FTW_CLASS_NAMES
 from drawthename.data.ftw import FTWDataset, to_display_rgb
-from drawthename.embeddings import embed_regions, load_backbone
+from drawthename.data.mapillary_vistas import (
+    DEFAULT_CONTINENT_LABELS_PATH,
+    SHARED_CLASSES,
+    MapillaryVistasDataset,
+)
+from drawthename.embeddings import ClipLikeBackbone, embed_regions, load_backbone
 from drawthename.ftw_compare import (
     compare_concept_sets,
     domain_shift_candidates_per_pair,
@@ -51,6 +57,13 @@ from drawthename.regions import (
     extract_regions,
 )
 from drawthename.segmentation_model import PRUEModel, SegmentationModel
+
+# Vistas Mode analyzes only the geo-bias paper's 7 classes shared between
+# Cityscapes and Vistas (person/rider/car/truck/bus/motorcycle/bicycle).
+VISTAS_CLASS_NAMES = {class_id: name for name, class_id in SHARED_CLASSES.items()}
+
+# Placeholder crop for regions whose crop was dropped after embedding.
+_DROPPED_CROP = np.zeros((0, 0, 3), dtype=np.uint8)
 
 
 def run_standard_cv_pipeline(
@@ -199,6 +212,179 @@ def run_ftw_pipeline(config: dict[str, Any], output_dir: Path) -> None:
         output_dir / "summary.md",
         class_names=FTW_CLASS_NAMES,
         residual_ratio_threshold=config["naming"].get("residual_ratio_threshold", 0.1),
+    )
+
+
+def run_vistas_pipeline(config: dict[str, Any], output_dir: Path) -> None:
+    """Vistas Mode: Standard CV Mode's SegFormer inference + bias naming on
+    Mapillary Vistas, restricted to the geo-bias paper's 7 shared classes,
+    with FTW Mode's confound checks re-scoped: each region's continent goes
+    in Region.country (intra/inter-country -> intra/inter-continent), and
+    each image plays an FTW tile's role, since its regions share camera,
+    weather and time of day (intra/inter-tile -> intra/inter-image). Tests
+    whether the pipeline, unprompted, names the class confusions the
+    geo-bias paper (arXiv:2412.11061) and our own geo_bias_pipeline
+    replication measure. Writes the same output set as FTW Mode."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset = MapillaryVistasDataset(
+        root=Path(config["data"]["root"]),
+        continent_labels_path=Path(
+            config["data"].get("continent_labels", DEFAULT_CONTINENT_LABELS_PATH)
+        ),
+    )
+    segmentation_model = SegmentationModel(
+        checkpoint=config["segmentation_model"]["checkpoint"],
+        device=config["backbone"]["device"],
+    )
+    backbone = load_backbone(
+        config["backbone"]["name"], device=config["backbone"]["device"]
+    )
+
+    concept_texts = load_concept_bank(Path(config["concept_bank"]))
+    concept_embeddings = center_embeddings(embed_concept_bank(concept_texts, backbone))
+
+    regions, embeddings, pixel_counts = _extract_and_embed_vistas_regions(
+        dataset,
+        segmentation_model,
+        backbone,
+        config["regions"],
+        limit=config["data"].get("limit"),
+        max_side=config["data"].get("max_side"),
+    )
+
+    global_error_mode = _compute_global_error_mode(
+        regions, embeddings, concept_texts, concept_embeddings, config["naming"]
+    )
+
+    named_directions, cluster_id_by_region_idx, silhouette_by_class = (
+        _name_bias_directions(
+            regions,
+            embeddings,
+            concept_texts,
+            concept_embeddings,
+            global_error_mode,
+            clustering_cfg=config["clustering"],
+            naming_cfg=config["naming"],
+            output_dir=output_dir,
+            class_names=VISTAS_CLASS_NAMES,
+            plot_max_points=config.get("plots", {}).get("max_points_per_class", 3000),
+            check_tile_confounds=True,
+            intra_inter_cos_threshold=config["geo_compare"][
+                "intra_inter_divergence_threshold"
+            ],
+            concept_comparison_top_k=config["geo_compare"].get(
+                "concept_comparison_top_k", 20
+            ),
+            min_pair_region_count=config["geo_compare"].get(
+                "min_pair_region_count", 10
+            ),
+        )
+    )
+
+    _write_embeddings(
+        regions, embeddings, cluster_id_by_region_idx, output_dir / "embeddings.npz"
+    )
+    _write_clusters(named_directions, silhouette_by_class, output_dir / "clusters.json")
+    _write_bias_directions(
+        named_directions, global_error_mode, output_dir / "bias_directions.json"
+    )
+    _write_pixel_accuracy(pixel_counts, output_dir / "pixel_accuracy.json")
+    _write_summary(
+        named_directions,
+        global_error_mode,
+        config["naming"]["stability_threshold"],
+        output_dir / "summary.md",
+        class_names=VISTAS_CLASS_NAMES,
+        residual_ratio_threshold=config["naming"].get("residual_ratio_threshold", 0.1),
+    )
+
+
+def _downscale(
+    image: np.ndarray, ground_truth: np.ndarray, max_side: int | None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Shrinks image (bilinear) and ground_truth (nearest, so class ids stay
+    valid) so their longer side is at most max_side; no-op if already within
+    it or max_side is None."""
+    h, w = ground_truth.shape
+    if max_side is None or max(h, w) <= max_side:
+        return image, ground_truth
+    scale = max_side / max(h, w)
+    size = (round(w * scale), round(h * scale))
+    return (
+        np.array(Image.fromarray(image).resize(size, Image.BILINEAR)),
+        np.array(Image.fromarray(ground_truth).resize(size, Image.NEAREST)),
+    )
+
+
+def _extract_and_embed_vistas_regions(
+    dataset: MapillaryVistasDataset,
+    segmentation_model: SegmentationModel,
+    backbone: ClipLikeBackbone,
+    regions_cfg: dict[str, Any],
+    limit: int | None = None,
+    max_side: int | None = None,
+) -> tuple[list[Region], np.ndarray, dict[int, tuple[int, int]]]:
+    """Vistas-mode counterpart to _extract_all_regions, returning embeddings
+    too. Ground truth outside VISTAS_CLASS_NAMES is set to IGNORE_CLASS
+    before extraction (predictions are untouched, so a car predicted as
+    "road" still counts as a car error). Each image's regions are embedded
+    straight away and their crops dropped: crops are views into the full
+    image, so holding every crop until one embed_regions call at the end
+    (as the other modes do) would keep all ~11,300 images in memory."""
+    shared_ids = np.array(sorted(VISTAS_CLASS_NAMES))
+    all_regions: list[Region] = []
+    all_embeddings: list[np.ndarray] = []
+    pixel_counts: dict[int, list[int]] = defaultdict(lambda: [0, 0])
+    num_samples = min(len(dataset), limit) if limit else len(dataset)
+    for index in tqdm(
+        range(num_samples), desc="Running inference + extracting regions"
+    ):
+        sample = dataset[index]
+        image, ground_truth = _downscale(sample.image, sample.ground_truth, max_side)
+        ground_truth = np.where(
+            np.isin(ground_truth, shared_ids), ground_truth, IGNORE_CLASS
+        ).astype(np.uint8)
+        prediction = segmentation_model.predict(image)
+        error_mask = compute_error_mask(prediction, ground_truth)
+
+        for class_id in np.unique(ground_truth):
+            if class_id == IGNORE_CLASS:
+                continue
+            class_pixel_mask = ground_truth == class_id
+            counts = pixel_counts[int(class_id)]
+            counts[0] += int(error_mask[class_pixel_mask].sum())
+            counts[1] += int(class_pixel_mask.sum())
+
+        regions = extract_regions(
+            image=image,
+            error_mask=error_mask,
+            ground_truth=ground_truth,
+            image_id=sample.image_id,
+            min_area_px=regions_cfg["min_area_px"],
+            pad_px_min=regions_cfg["pad_px_min"],
+            pad_frac=regions_cfg["pad_frac"],
+            error_rate_threshold=regions_cfg["error_rate_threshold"],
+            tile_id=sample.image_id,
+            country=sample.continent,
+            subdivision_size=regions_cfg.get("subdivision_size"),
+        )
+        if not regions:
+            continue
+        all_embeddings.append(embed_regions(regions, backbone))
+        for region in regions:
+            region.crop = _DROPPED_CROP
+        all_regions.extend(regions)
+
+    embeddings = (
+        np.concatenate(all_embeddings, axis=0)
+        if all_embeddings
+        else np.zeros((0, 0), dtype=np.float32)
+    )
+    return (
+        all_regions,
+        embeddings,
+        {class_id: tuple(counts) for class_id, counts in pixel_counts.items()},
     )
 
 

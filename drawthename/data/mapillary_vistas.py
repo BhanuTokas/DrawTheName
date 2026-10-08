@@ -9,9 +9,10 @@ Vistas ships no per-image geographic metadata (GPS is stripped for privacy
 in the public research release) -- continent labels come from a companion
 lat/lon file the paper's own authors published separately
 (https://zenodo.org/records/11459554, ASU). Of its 20,000 rows only 11,300
-have coordinates; that number matches the paper's own reported post-
-preprocessing image count exactly, so this is very likely the exact metadata
-source the paper itself used. See scripts/build_mapillary_continent_labels.py
+have coordinates. The paper reports 10,547 images after its own
+preprocessing (Table 4), so its image set is a subset of this one, filtered
+by steps the paper doesn't spell out -- our runs use all 11,300 and won't
+match its per-continent counts exactly. See scripts/build_mapillary_continent_labels.py
 for how mapillary_vistas_continents.csv (bundled alongside this module) was
 derived from it: offline reverse-geocoding (no network calls), 6-continent
 scheme (Europe/North America/South America/Africa/Asia/Oceania), 11,300 of
@@ -142,7 +143,8 @@ def _labels_dir(split_dir: Path) -> Path:
 class MapillaryVistasDataset(Dataset):
     """Combined training+validation split, restricted to images with a known
     continent (drops the ~8,700/20,000 images the companion geolocation file
-    has no coordinates for -- matches the paper's own preprocessing)."""
+    has no coordinates for; the paper's own 10,547 is a further-filtered
+    subset)."""
 
     def __init__(
         self,

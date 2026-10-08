@@ -1,0 +1,56 @@
+# Vistas Mode -- DrawTheName's bias naming on Mapillary Vistas, by continent:
+# does the pipeline, unprompted, name the class confusions that the geo-bias
+# paper (arXiv:2412.11061) and configs/mapillary_geo_bias.yaml's replication
+# measure? Reported as FTW Mode's output set, re-scoped: "country" means
+# continent and "tile" means a single image.
+#
+# Copy this file to vistas.yaml (gitignored) and set data.root to this
+# machine's local dataset path.
+mode: vistas
+
+data:
+  root: /path/to/Datasets/mapillary-vistas
+  # bundled in the repo; only override if regenerated via
+  # scripts/build_mapillary_continent_labels.py
+  continent_labels: drawthename/data/mapillary_vistas_continents.csv
+  limit: null # only process the first N images; null for all ~11,300
+  max_side: 2048 # downscale images so their longer side is at most this (Cityscapes' width), keeping min_area_px/subdivision_size on the same scale as Standard CV Mode; null to keep full resolution
+
+segmentation_model:
+  # same Cityscapes-trained SegFormer as Standard CV Mode and the geo-bias
+  # replication, so results are comparable with both
+  checkpoint: nvidia/segformer-b0-finetuned-cityscapes-1024-1024
+
+backbone:
+  name: ViT-L-14
+  device: cuda
+
+regions:
+  min_area_px: 64
+  pad_px_min: 16
+  pad_frac: 0.1
+  error_rate_threshold: 0.5
+  subdivision_size: 192 # same as Standard CV Mode; null/omit to disable
+
+clustering:
+  k_min: 2
+  k_max: 8
+
+naming:
+  bootstrap_resamples: 500
+  cosine_threshold: 0.9 # per-resample cosine similarity needed to count as "agreeing"
+  stability_threshold: 0.95
+  residual_ratio_threshold: 0.1 # flag a direction in summary.md when ||deconfounded|| / ||raw|| falls below this -- concepts are ~arbitrary noise, not signal
+  top_k_concepts: 10
+
+geo_compare:
+  intra_inter_divergence_threshold: 0.5 # cosine similarity below this between intra-image/inter-image (or intra-continent/inter-continent) directions flags a likely confound
+  concept_comparison_top_k: 20 # top-k used only for the prevalent/tile_sensitive/domain_shift_candidates comparison (see configs/ftw.yaml.example)
+  min_pair_region_count: 10 # per-(error continent, correct continent)-pair minimum region count on each side before that pair is trusted in the per-pair domain-shift breakdown
+
+concept_bank: concept_banks/vistas_concepts.txt
+
+plots:
+  max_points_per_class: 3000 # stratified subsample cap before UMAP fitting; null/omit for no cap
+
+output_dir: results/vistas
